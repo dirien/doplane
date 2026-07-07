@@ -19,6 +19,7 @@ package pulumido
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/dirien/doplane/internal/runnerops"
@@ -33,6 +34,10 @@ type ExecRunner struct {
 	PulumiBin string
 	// Timeout bounds a single operation.
 	Timeout time.Duration
+	// ResolveSecret resolves a valuesFrom Secret key ((namespace, name,
+	// key) → value) — dev mode has no kubelet env injection. Nil rejects
+	// operations with secret inputs.
+	ResolveSecret func(ctx context.Context, namespace, name, key string) (string, error)
 }
 
 var _ Runner = (*ExecRunner)(nil)
@@ -48,6 +53,28 @@ func (r *ExecRunner) execute(ctx context.Context, op runnerops.Op) (runnerops.Re
 	ctx, cancel := context.WithTimeout(ctx, r.timeout())
 	defer cancel()
 	ops := &runnerops.Runner{PulumiBin: r.PulumiBin}
+	if inputs := SecretInputsFromContext(ctx); len(inputs) > 0 {
+		if r.ResolveSecret == nil {
+			return runnerops.Result{}, &CodedError{Code: runnerops.CodeSecretInputMissing,
+				Message: "exec runner has no secret resolver configured"}
+		}
+		var ordered []SecretInput
+		op.SecretInputs, ordered = secretInputsPlan(inputs)
+		values := make(map[string]string, len(ordered))
+		namespace := namespaceFromContext(ctx)
+		for i, in := range ordered {
+			value, err := r.ResolveSecret(ctx, namespace, in.SecretName, in.SecretKey)
+			if err != nil {
+				return runnerops.Result{}, &CodedError{Code: runnerops.CodeSecretInputMissing,
+					Message: fmt.Sprintf("resolving secret input for %q: %v", in.ToPath, err)}
+			}
+			values[secretEnvName(i)] = value
+		}
+		ops.LookupEnv = func(name string) (string, bool) {
+			v, ok := values[name]
+			return v, ok
+		}
+	}
 	res := ops.Execute(ctx, op)
 	return res, resultErr(res)
 }

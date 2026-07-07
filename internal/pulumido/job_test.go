@@ -85,7 +85,7 @@ func TestEnsureJobTerminatingNamespaceFallback(t *testing.T) {
 	t.Run("teardown verbs fall back to the operator namespace", func(t *testing.T) {
 		for _, verb := range []string{runnerops.VerbDelete, runnerops.VerbEngineDestroy} {
 			r := &JobRunner{Clientset: terminatingNamespaceClientset("tenant-a"), Namespace: "doplane-system"}
-			got, err := r.ensureJob(ctx, "tenant-a", "do-"+verb+"-abc", verb, "{}")
+			got, err := r.ensureJob(ctx, "tenant-a", "do-"+verb+"-abc", verb, "{}", nil)
 			if err != nil {
 				t.Fatalf("%s: teardown must not wedge on a terminating namespace: %v", verb, err)
 			}
@@ -100,14 +100,14 @@ func TestEnsureJobTerminatingNamespaceFallback(t *testing.T) {
 
 	t.Run("non-teardown verbs surface the error", func(t *testing.T) {
 		r := &JobRunner{Clientset: terminatingNamespaceClientset("tenant-a"), Namespace: "doplane-system"}
-		if _, err := r.ensureJob(ctx, "tenant-a", "do-create-abc", runnerops.VerbCreate, "{}"); err == nil {
+		if _, err := r.ensureJob(ctx, "tenant-a", "do-create-abc", runnerops.VerbCreate, "{}", nil); err == nil {
 			t.Error("create in a terminating namespace must fail, not silently run with operator credentials")
 		}
 	})
 
 	t.Run("healthy namespace keeps the tenant job", func(t *testing.T) {
 		r := &JobRunner{Clientset: fake.NewClientset(), Namespace: "doplane-system"}
-		got, err := r.ensureJob(ctx, "tenant-a", "do-delete-abc", runnerops.VerbDelete, "{}")
+		got, err := r.ensureJob(ctx, "tenant-a", "do-delete-abc", runnerops.VerbDelete, "{}", nil)
 		if err != nil || got != "tenant-a" {
 			t.Fatalf("ensureJob() = %q, %v; want tenant-a, nil", got, err)
 		}
@@ -115,10 +115,10 @@ func TestEnsureJobTerminatingNamespaceFallback(t *testing.T) {
 
 	t.Run("existing job is adopted", func(t *testing.T) {
 		r := &JobRunner{Clientset: fake.NewClientset(), Namespace: "doplane-system"}
-		if _, err := r.ensureJob(ctx, "tenant-a", "do-delete-abc", runnerops.VerbDelete, "{}"); err != nil {
+		if _, err := r.ensureJob(ctx, "tenant-a", "do-delete-abc", runnerops.VerbDelete, "{}", nil); err != nil {
 			t.Fatal(err)
 		}
-		got, err := r.ensureJob(ctx, "tenant-a", "do-delete-abc", runnerops.VerbDelete, "{}")
+		got, err := r.ensureJob(ctx, "tenant-a", "do-delete-abc", runnerops.VerbDelete, "{}", nil)
 		if err != nil || got != "tenant-a" {
 			t.Fatalf("adoption: ensureJob() = %q, %v; want tenant-a, nil", got, err)
 		}
@@ -127,7 +127,7 @@ func TestEnsureJobTerminatingNamespaceFallback(t *testing.T) {
 
 func TestBuildJobNamespaceAndCredentials(t *testing.T) {
 	r := &JobRunner{Namespace: "doplane-system", CredentialsSecret: "provider-credentials"}
-	job := r.buildJob("do-create-abc", "tenant-a", r.CredentialsSecret, "create", "{}")
+	job := r.buildJob("do-create-abc", "tenant-a", r.CredentialsSecret, "create", "{}", nil)
 
 	if job.Namespace != "tenant-a" {
 		t.Errorf("job namespace = %q, want the namespace passed in", job.Namespace)
@@ -149,7 +149,7 @@ func TestBuildJobPluginCache(t *testing.T) {
 	}
 
 	t.Run("operator-namespace jobs mount the cache", func(t *testing.T) {
-		job := r.buildJob("do-create-abc", "doplane-system", "", "create", "{}")
+		job := r.buildJob("do-create-abc", "doplane-system", "", "create", "{}", nil)
 		spec := job.Spec.Template.Spec
 		var mounted bool
 		for _, v := range spec.Volumes {
@@ -178,7 +178,7 @@ func TestBuildJobPluginCache(t *testing.T) {
 	})
 
 	t.Run("tenant-namespace jobs skip the cache (PVCs are namespace-local)", func(t *testing.T) {
-		job := r.buildJob("do-create-abc", "tenant-a", "", "create", "{}")
+		job := r.buildJob("do-create-abc", "tenant-a", "", "create", "{}", nil)
 		spec := job.Spec.Template.Spec
 		for _, v := range spec.Volumes {
 			if v.PersistentVolumeClaim != nil {

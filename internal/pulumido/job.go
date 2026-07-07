@@ -248,19 +248,19 @@ func teardownVerb(verb string) bool {
 // rejects new Jobs; teardown operations then fall back to the operator
 // namespace — and its credentials Secret, since the tenant's Secret is
 // being deleted too — so DoResource finalizers cannot wedge the namespace.
-func (r *JobRunner) ensureJob(ctx context.Context, namespace, name, verb, opJSON string) (string, error) {
+func (r *JobRunner) ensureJob(ctx context.Context, namespace, name, verb, opJSON string, secretEnv []corev1.EnvVar) (string, error) {
 	credentials := r.CredentialsSecret
 	if fromProvider := credentialsFromContext(ctx); fromProvider != "" {
 		// A DoProvider profile pinned this operation to its own Secret.
 		credentials = fromProvider
 	}
-	job := r.buildJob(name, namespace, credentials, verb, opJSON)
+	job := r.buildJob(name, namespace, credentials, verb, opJSON, secretEnv)
 	_, err := r.Clientset.BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{})
 	switch {
 	case err == nil || apierrors.IsAlreadyExists(err):
 		return namespace, nil
 	case namespace != r.Namespace && teardownVerb(verb) && apierrors.HasStatusCause(err, corev1.NamespaceTerminatingCause):
-		fallback := r.buildJob(name, r.Namespace, credentials, verb, opJSON)
+		fallback := r.buildJob(name, r.Namespace, credentials, verb, opJSON, secretEnv)
 		if _, err := r.Clientset.BatchV1().Jobs(r.Namespace).Create(ctx, fallback, metav1.CreateOptions{}); err != nil &&
 			!apierrors.IsAlreadyExists(err) {
 			return "", fmt.Errorf("creating fallback runner job %s/%s for terminating namespace %s: %w",
@@ -294,6 +294,27 @@ func (r *JobRunner) jobName(ctx context.Context, verb, opJSON string) string {
 // deleted only once a terminal outcome has been observed and its output
 // secured; otherwise it is left in place so a later reconcile can adopt it.
 func (r *JobRunner) executeOp(ctx context.Context, op runnerops.Op) (runnerops.Result, error) {
+	// Secret inputs travel as kubelet-resolved env vars; only the
+	// path→variable mapping enters the op document (and thus the Job spec).
+	var secretEnv []corev1.EnvVar
+	if inputs := SecretInputsFromContext(ctx); len(inputs) > 0 {
+		var ordered []SecretInput
+		op.SecretInputs, ordered = secretInputsPlan(inputs)
+		for i, in := range ordered {
+			secretEnv = append(secretEnv, corev1.EnvVar{
+				Name: secretEnvName(i),
+				ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: in.SecretName},
+					Key:                  in.SecretKey,
+					// A missing Secret must not wedge the pod in
+					// CreateContainerConfigError: the runner reports a
+					// typed SecretInputMissing failure instead.
+					Optional: ptr.To(true),
+				}},
+			})
+		}
+	}
+
 	opJSON, err := json.Marshal(op)
 	if err != nil {
 		return runnerops.Result{}, err
@@ -303,7 +324,7 @@ func (r *JobRunner) executeOp(ctx context.Context, op runnerops.Op) (runnerops.R
 	ctx, cancel := context.WithTimeout(ctx, r.timeout())
 	defer cancel()
 
-	namespace, err := r.ensureJob(ctx, r.jobNamespace(ctx), name, op.Verb, string(opJSON))
+	namespace, err := r.ensureJob(ctx, r.jobNamespace(ctx), name, op.Verb, string(opJSON), secretEnv)
 	if err != nil {
 		return runnerops.Result{}, err
 	}
@@ -416,12 +437,13 @@ func (r *JobRunner) podLogs(namespace, jobName string) (string, error) {
 	return "", lastErr
 }
 
-func (r *JobRunner) buildJob(name, namespace, credentialsSecret, verb, opJSON string) *batchv1.Job {
+func (r *JobRunner) buildJob(name, namespace, credentialsSecret, verb, opJSON string, secretEnv []corev1.EnvVar) *batchv1.Job {
 	env := []corev1.EnvVar{
 		{Name: "DOPLANE_OP", Value: opJSON},
 		{Name: "DOPLANE_BAKED_PLUGINS", Value: bakedPluginsDir},
 		{Name: "PULUMI_SKIP_UPDATE_CHECK", Value: "true"},
 	}
+	env = append(env, secretEnv...)
 	var envFrom []corev1.EnvFromSource
 	if credentialsSecret != "" {
 		envFrom = append(envFrom, corev1.EnvFromSource{
