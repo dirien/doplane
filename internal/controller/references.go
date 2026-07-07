@@ -23,14 +23,47 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	dov1alpha1 "github.com/dirien/doplane/api/v1alpha1"
 	"github.com/dirien/doplane/internal/pulumido"
 )
+
+// applyReferences runs the reference phase of a reconcile: cycle
+// detection, resolution into props, and readiness gating. A non-nil halt
+// means the reconcile must return (*halt, err) immediately.
+func (r *DoResourceReconciler) applyReferences(ctx context.Context, res *dov1alpha1.DoResource, props map[string]any) (*ctrl.Result, error) {
+	if len(res.Spec.References) == 0 {
+		return nil, nil
+	}
+	if cycle, cyclic := r.detectCycle(ctx, res); cyclic {
+		result, err := r.markSyncFailed(ctx, res, "CyclicReference", fmt.Errorf("reference cycle detected: %s", cycle), false)
+		return &result, err
+	}
+	waiting, refErr := r.resolveReferences(ctx, res, props)
+	if refErr != nil {
+		result, err := r.markSyncFailed(ctx, res, "InvalidReferences", refErr, false)
+		return &result, err
+	}
+	if len(waiting) > 0 {
+		msg := "waiting for: " + strings.Join(waiting, "; ")
+		logf.FromContext(ctx).Info("references not yet resolvable", "waiting", waiting)
+		setCondition(res, dov1alpha1.ConditionReady, metav1.ConditionFalse, "WaitingForDependency", msg)
+		if err := r.persistStatus(ctx, res); err != nil {
+			return &ctrl.Result{}, err
+		}
+		// The dependency watch is the primary wake-up; requeue is a backstop.
+		return &ctrl.Result{RequeueAfter: time.Minute}, nil
+	}
+	return nil, nil
+}
 
 // resolveReferences resolves spec.references into props (mutating it).
 // It returns the list of not-yet-resolvable references (dependency missing

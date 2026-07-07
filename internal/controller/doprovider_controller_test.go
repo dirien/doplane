@@ -153,4 +153,36 @@ var _ = Describe("DoProvider Controller", func() {
 		Expect(cond.Reason).To(Equal("NotRequired"))
 	})
 
+	It("checks DoProviderConfig credentials in the config's own namespace", func() {
+		configReconciler := &DoProviderConfigReconciler{Profile: reconciler}
+		config := &dov1alpha1.DoProviderConfig{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: providerName},
+			Spec: dov1alpha1.DoProviderSpec{
+				Package:              "random@4.21.0",
+				CredentialsSecretRef: &dov1alpha1.LocalSecretReference{Name: secretName},
+				CredentialKeys:       []string{"RANDOM_TOKEN"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, config)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, config) })
+		configKey := types.NamespacedName{Namespace: "default", Name: providerName}
+
+		// Secret missing in the tenant namespace → not Ready.
+		_, err := configReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: configKey})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(k8sClient.Get(ctx, configKey, config)).To(Succeed())
+		cond := meta.FindStatusCondition(config.Status.Conditions, dov1alpha1.ConditionCredentialsReady)
+		Expect(cond).NotTo(BeNil())
+		Expect(cond.Reason).To(Equal("SecretNotFound"))
+
+		// Tenant creates the Secret in their namespace → Ready.
+		Expect(k8sClient.Create(ctx, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: secretName},
+			Data:       map[string][]byte{"RANDOM_TOKEN": []byte("t")},
+		})).To(Succeed())
+		_, err = configReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: configKey})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(k8sClient.Get(ctx, configKey, config)).To(Succeed())
+		Expect(meta.IsStatusConditionTrue(config.Status.Conditions, dov1alpha1.ConditionReady)).To(BeTrue())
+	})
 })

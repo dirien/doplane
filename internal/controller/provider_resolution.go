@@ -31,22 +31,47 @@ import (
 	"github.com/dirien/doplane/internal/pulumido"
 )
 
-// providerRefIndexKey indexes DoResources by the DoProvider they reference,
-// so provider events re-enqueue exactly the resources using them.
-const providerRefIndexKey = ".spec.providerRef.name"
+// providerRefIndexKey indexes DoResources by the cluster-scoped DoProvider
+// they reference; providerConfigIndexKey does the same for namespaced
+// DoProviderConfigs. Profile events then re-enqueue exactly the resources
+// using them.
+const (
+	providerRefIndexKey    = ".spec.providerRef.name"
+	providerConfigIndexKey = ".spec.providerRef.configName"
+)
 
-// getProvider fetches the referenced DoProvider. A nil provider with nil
-// error means the resource has no providerRef; not-found surfaces as
-// apierrors.IsNotFound for the caller to translate per reconcile phase.
-func (r *DoResourceReconciler) getProvider(ctx context.Context, res *dov1alpha1.DoResource) (*dov1alpha1.DoProvider, error) {
-	if res.Spec.ProviderRef == nil {
+// providerProfile is the kind-independent view of a resolved provider
+// profile: the spec rules plus a human-readable reference for messages.
+type providerProfile struct {
+	ref  string
+	spec dov1alpha1.DoProviderSpec
+}
+
+// getProvider fetches the referenced profile — a cluster-scoped DoProvider
+// (default) or a DoProviderConfig in the resource's namespace. A nil
+// profile with nil error means the resource has no providerRef; not-found
+// surfaces as apierrors.IsNotFound for the caller to translate per
+// reconcile phase.
+func (r *DoResourceReconciler) getProvider(ctx context.Context, res *dov1alpha1.DoResource) (*providerProfile, error) {
+	ref := res.Spec.ProviderRef
+	if ref == nil {
 		return nil, nil
 	}
+	if ref.Kind == dov1alpha1.ProviderKindConfig {
+		config := &dov1alpha1.DoProviderConfig{}
+		if err := r.Get(ctx, types.NamespacedName{Namespace: res.Namespace, Name: ref.Name}, config); err != nil {
+			return nil, err
+		}
+		return &providerProfile{
+			ref:  fmt.Sprintf("doproviderconfig %q", res.Namespace+"/"+ref.Name),
+			spec: config.Spec,
+		}, nil
+	}
 	provider := &dov1alpha1.DoProvider{}
-	if err := r.Get(ctx, types.NamespacedName{Name: res.Spec.ProviderRef.Name}, provider); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: ref.Name}, provider); err != nil {
 		return nil, err
 	}
-	return provider, nil
+	return &providerProfile{ref: fmt.Sprintf("doprovider %q", ref.Name), spec: provider.Spec}, nil
 }
 
 // resolveProvider applies spec.providerRef to the reconcile: the provider's
@@ -58,18 +83,18 @@ func (r *DoResourceReconciler) getProvider(ctx context.Context, res *dov1alpha1.
 func (r *DoResourceReconciler) resolveProvider(ctx context.Context, res *dov1alpha1.DoResource, pkg, token string) (
 	context.Context, string, *ctrl.Result, error,
 ) {
-	provider, err := r.getProvider(ctx, res)
+	profile, err := r.getProvider(ctx, res)
 	if err != nil && !isProviderNotFound(err) {
 		return ctx, pkg, &ctrl.Result{}, err
 	}
-	if provider != nil {
-		if provider.Spec.CredentialsSecretRef != nil {
-			ctx = pulumido.WithCredentialsSecret(ctx, provider.Spec.CredentialsSecretRef.Name)
+	if profile != nil {
+		if profile.spec.CredentialsSecretRef != nil {
+			ctx = pulumido.WithCredentialsSecret(ctx, profile.spec.CredentialsSecretRef.Name)
 		}
 		if pkg == "" || !res.DeletionTimestamp.IsZero() {
 			// On the live path a conflicting spec.package is rejected below;
-			// during teardown the provider's pin always wins.
-			pkg = provider.Spec.Package
+			// during teardown the profile's pin always wins.
+			pkg = profile.spec.Package
 		}
 	}
 	if !res.DeletionTimestamp.IsZero() {
@@ -77,23 +102,33 @@ func (r *DoResourceReconciler) resolveProvider(ctx context.Context, res *dov1alp
 	}
 	if err != nil {
 		result, ferr := r.markSyncFailed(ctx, res, "ProviderNotFound",
-			fmt.Errorf("doprovider %q not found", res.Spec.ProviderRef.Name), false)
+			fmt.Errorf("provider profile %q (kind %s) not found",
+				res.Spec.ProviderRef.Name, refKind(res.Spec.ProviderRef)), false)
 		return ctx, pkg, &result, ferr
 	}
-	if provider != nil {
-		if pkg != provider.Spec.Package {
+	if profile != nil {
+		if pkg != profile.spec.Package {
 			result, ferr := r.markSyncFailed(ctx, res, "ProviderPackageMismatch",
-				fmt.Errorf("spec.package %q conflicts with doprovider %q package %q; drop spec.package or make them match",
-					pkg, provider.Name, provider.Spec.Package), false)
+				fmt.Errorf("spec.package %q conflicts with %s package %q; drop spec.package or make them match",
+					pkg, profile.ref, profile.spec.Package), false)
 			return ctx, pkg, &result, ferr
 		}
-		if !tokenAllowed(provider.Spec.AllowedResources, token) {
+		if !tokenAllowed(profile.spec.AllowedResources, token) {
 			result, ferr := r.markSyncFailed(ctx, res, "ResourceNotAllowed",
-				fmt.Errorf("resource type %q is not in doprovider %q allowedResources", token, provider.Name), false)
+				fmt.Errorf("resource type %q is not in %s allowedResources", token, profile.ref), false)
 			return ctx, pkg, &result, ferr
 		}
 	}
 	return ctx, pkg, nil, nil
+}
+
+// refKind normalizes the providerRef kind (defaulted by the CRD, but the
+// zero value can appear on objects created before defaulting).
+func refKind(ref *dov1alpha1.ProviderReference) string {
+	if ref != nil && ref.Kind == dov1alpha1.ProviderKindConfig {
+		return dov1alpha1.ProviderKindConfig
+	}
+	return dov1alpha1.ProviderKindCluster
 }
 
 // tokenAllowed reports whether a resource type token is permitted by a
@@ -129,8 +164,22 @@ func tokenAllowed(allowed []string, token string) bool {
 // mapProviderResources re-enqueues every DoResource referencing a changed
 // DoProvider (profile edits change resolved packages and credentials).
 func (r *DoResourceReconciler) mapProviderResources(ctx context.Context, obj client.Object) []reconcile.Request {
+	return r.requestsFromIndex(ctx, providerRefIndexKey, obj.GetName(), "")
+}
+
+// mapProviderConfigResources re-enqueues DoResources in the config's own
+// namespace that reference it (configs never apply across namespaces).
+func (r *DoResourceReconciler) mapProviderConfigResources(ctx context.Context, obj client.Object) []reconcile.Request {
+	return r.requestsFromIndex(ctx, providerConfigIndexKey, obj.GetName(), obj.GetNamespace())
+}
+
+func (r *DoResourceReconciler) requestsFromIndex(ctx context.Context, key, value, namespace string) []reconcile.Request {
 	list := &dov1alpha1.DoResourceList{}
-	if err := r.List(ctx, list, client.MatchingFields{providerRefIndexKey: obj.GetName()}); err != nil {
+	opts := []client.ListOption{client.MatchingFields{key: value}}
+	if namespace != "" {
+		opts = append(opts, client.InNamespace(namespace))
+	}
+	if err := r.List(ctx, list, opts...); err != nil {
 		return nil
 	}
 	reqs := make([]reconcile.Request, 0, len(list.Items))

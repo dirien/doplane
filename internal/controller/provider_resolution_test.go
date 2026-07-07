@@ -186,4 +186,24 @@ var _ = Describe("DoResource providerRef resolution", func() {
 		Expect(cond.Reason).To(Equal("ProviderNotFound"))
 		Expect(runner.created).To(BeEmpty())
 	})
+
+	It("resolves a namespaced DoProviderConfig in the resource's namespace", func() {
+		config := &dov1alpha1.DoProviderConfig{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: providerName},
+			Spec:       dov1alpha1.DoProviderSpec{Package: "random@4.19.0"},
+		}
+		Expect(k8sClient.Create(ctx, config)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, config) })
+
+		// A cluster-scoped DoProvider with the same name but a different
+		// package proves kind selection: the config must win.
+		createProvider(dov1alpha1.DoProviderSpec{Package: "random@4.21.0"})
+		createResource(dov1alpha1.DoResourceSpec{
+			Type:        token,
+			ProviderRef: &dov1alpha1.ProviderReference{Name: providerName, Kind: dov1alpha1.ProviderKindConfig},
+		})
+
+		reconcileN(2)
+		Expect(runner.createdPkgs).To(ConsistOf("random@4.19.0"))
+	})
 })

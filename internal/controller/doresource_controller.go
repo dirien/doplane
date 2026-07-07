@@ -74,6 +74,7 @@ type DoResourceReconciler struct {
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods/log,verbs=get
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;update
 
 // Reconcile drives the external resource toward spec:
 // create when no id is recorded, patch when the spec generation changed,
@@ -132,24 +133,17 @@ func (r *DoResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// Resolve cross-resource references into the properties. Unresolvable
 	// references gate readiness; the watch on source objects re-enqueues
 	// this resource when they progress.
-	if len(res.Spec.References) > 0 {
-		if cycle, cyclic := r.detectCycle(ctx, res); cyclic {
-			return r.markSyncFailed(ctx, res, "CyclicReference", fmt.Errorf("reference cycle detected: %s", cycle), false)
-		}
-		waiting, refErr := r.resolveReferences(ctx, res, props)
-		if refErr != nil {
-			return r.markSyncFailed(ctx, res, "InvalidReferences", refErr, false)
-		}
-		if len(waiting) > 0 {
-			msg := "waiting for: " + strings.Join(waiting, "; ")
-			log.Info("references not yet resolvable", "waiting", waiting)
-			setCondition(res, dov1alpha1.ConditionReady, metav1.ConditionFalse, "WaitingForDependency", msg)
-			if err := r.persistStatus(ctx, res); err != nil {
-				return ctrl.Result{}, err
-			}
-			// The dependency watch is the primary wake-up; requeue is a backstop.
-			return ctrl.Result{RequeueAfter: time.Minute}, nil
-		}
+	if halt, err := r.applyReferences(ctx, res, props); halt != nil {
+		return *halt, err
+	}
+
+	// Secret input values never pass through the controller: a placeholder
+	// satisfies schema validation (required inputs may come from Secrets),
+	// and the runner substitutes the real value from an env var injected in
+	// the Job's namespace.
+	ctx, halt, err = r.stageSecretInputs(ctx, res, props)
+	if halt != nil {
+		return *halt, err
 	}
 
 	// Validate the fully resolved inputs against the provider's JSON schema
@@ -168,16 +162,23 @@ func (r *DoResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	// The applied hash covers spec edits AND propagated reference values:
-	// either kind of change triggers a patch.
+	// either kind of change triggers a patch. Secret input values are not
+	// part of the hash (the controller never sees them) — their Secrets'
+	// resourceVersions stand in, so rotation re-patches the resource.
 	hash, err := hashProps(props)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	hash = r.mixSecretVersions(ctx, res, hash)
 
 	// Component resources are orchestrated through an ephemeral engine
 	// (stateless `pulumi do` cannot construct them); the exported
 	// checkpoint is persisted in status.engineState.
 	if schema.Resources[token].IsComponent {
+		if len(res.Spec.ValuesFrom) > 0 {
+			return r.markSyncFailed(ctx, res, "ValuesFromUnsupported",
+				fmt.Errorf("valuesFrom is not supported for component resources: the engine checkpoint persisted in status.engineState would contain the secret values"), false)
+		}
 		return r.reconcileComponent(ctx, res, token, pkg, props, hash)
 	}
 
@@ -348,6 +349,12 @@ func (r *DoResourceReconciler) markSynced(ctx context.Context, res *dov1alpha1.D
 	if err := r.persistStatus(ctx, res); err != nil {
 		return ctrl.Result{}, err
 	}
+	// Status is durable — connection details derive from it, so a failed
+	// publish retries without re-running the cloud operation.
+	if err := r.publishConnectionSecret(ctx, res); err != nil {
+		r.Recorder.Eventf(res, "Warning", "ConnectionSecretFailed", "%s", compact(err.Error()))
+		return ctrl.Result{}, err
+	}
 	return ctrl.Result{RequeueAfter: resyncInterval}, nil
 }
 
@@ -454,7 +461,17 @@ func (r *DoResourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &dov1alpha1.DoResource{}, providerRefIndexKey,
 		func(o client.Object) []string {
 			res, ok := o.(*dov1alpha1.DoResource)
-			if !ok || res.Spec.ProviderRef == nil {
+			if !ok || res.Spec.ProviderRef == nil || refKind(res.Spec.ProviderRef) != dov1alpha1.ProviderKindCluster {
+				return nil
+			}
+			return []string{res.Spec.ProviderRef.Name}
+		}); err != nil {
+		return err
+	}
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &dov1alpha1.DoResource{}, providerConfigIndexKey,
+		func(o client.Object) []string {
+			res, ok := o.(*dov1alpha1.DoResource)
+			if !ok || res.Spec.ProviderRef == nil || refKind(res.Spec.ProviderRef) != dov1alpha1.ProviderKindConfig {
 				return nil
 			}
 			return []string{res.Spec.ProviderRef.Name}
@@ -476,6 +493,7 @@ func (r *DoResourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// Provider profile edits change resolved packages and credentials
 		// for every resource referencing them.
 		Watches(&dov1alpha1.DoProvider{}, handler.EnqueueRequestsFromMapFunc(r.mapProviderResources)).
+		Watches(&dov1alpha1.DoProviderConfig{}, handler.EnqueueRequestsFromMapFunc(r.mapProviderConfigResources)).
 		// Reconciles block on runner Jobs for tens of seconds; allow a few
 		// objects in flight. The same object is never reconciled concurrently.
 		WithOptions(controller.Options{MaxConcurrentReconciles: 4}).

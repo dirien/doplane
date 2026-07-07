@@ -70,56 +70,15 @@ type DoProviderReconciler struct {
 // Reconcile fetches the provider schema, records the resolved package and
 // verifies the credentials Secret, rolling everything up into Ready.
 func (r *DoProviderReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := logf.FromContext(ctx)
-
 	provider := &dov1alpha1.DoProvider{}
 	if err := r.reader().Get(ctx, req.NamespacedName, provider); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	if !pulumido.PackagePinned(provider.Spec.Package) {
-		r.Recorder.Eventf(provider, "Warning", "ProviderNotPinned",
-			"spec.package %q has no pinned version; operations are not reproducible", provider.Spec.Package)
+	if err := r.validateProfile(ctx, provider, "doprovider/"+provider.Name,
+		provider.Spec, &provider.Status, provider.Generation, r.RunnerNamespace); err != nil {
+		return ctrl.Result{}, err
 	}
-
-	// Schema fetch runs through the runner (a Job in-cluster), which also
-	// installs the pinned plugin into the shared cache when enabled — one
-	// step proves both schema and plugin availability.
-	schemaOK := true
-	schema, err := r.Schemas.Get(pulumido.WithOwner(ctx, "doprovider/"+provider.Name), provider.Spec.Package, "")
-	if err != nil {
-		schemaOK = false
-		reason := schemaFailureReason(err)
-		setProviderCondition(provider, dov1alpha1.ConditionSchemaFetched, metav1.ConditionFalse, reason, compact(err.Error()))
-		setProviderCondition(provider, dov1alpha1.ConditionPluginReady, metav1.ConditionFalse, reason,
-			"plugin availability unknown while the schema cannot be fetched")
-		provider.Status.Plugin = &dov1alpha1.ProviderPluginStatus{Ready: false, CachePath: r.PluginCachePath}
-		log.Error(err, "provider schema fetch failed", "package", provider.Spec.Package)
-	} else {
-		setProviderCondition(provider, dov1alpha1.ConditionSchemaFetched, metav1.ConditionTrue, "SchemaFetched",
-			fmt.Sprintf("schema for %s@%s fetched", schema.Name, schema.Version))
-		setProviderCondition(provider, dov1alpha1.ConditionPluginReady, metav1.ConditionTrue, "PluginAvailable",
-			pluginReadyMessage(r.PluginCachePath))
-		provider.Status.Package = &dov1alpha1.ProviderPackageStatus{Name: schema.Name, Version: schema.Version}
-		provider.Status.Plugin = &dov1alpha1.ProviderPluginStatus{Ready: true, CachePath: r.PluginCachePath}
-	}
-
-	credsOK, credsErr := r.checkCredentials(ctx, provider)
-	if credsErr != nil {
-		return ctrl.Result{}, credsErr
-	}
-
-	if schemaOK && credsOK {
-		setProviderCondition(provider, dov1alpha1.ConditionReady, metav1.ConditionTrue, "Ready", "provider profile validated")
-	} else {
-		reason := "SchemaUnavailable"
-		if schemaOK {
-			reason = "CredentialsNotReady"
-		}
-		setProviderCondition(provider, dov1alpha1.ConditionReady, metav1.ConditionFalse, reason,
-			"one or more provider checks failed; see the other conditions")
-	}
-	provider.Status.ObservedGeneration = provider.Generation
 
 	if err := r.persistStatus(ctx, provider); err != nil {
 		return ctrl.Result{}, err
@@ -127,44 +86,102 @@ func (r *DoProviderReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	return ctrl.Result{RequeueAfter: providerResyncInterval}, nil
 }
 
-// checkCredentials verifies the configured Secret exists in the runner
-// namespace and holds every required key. The bool is the condition
+// validateProfile runs the shared profile checks (schema, plugin,
+// credentials, Ready roll-up) for a DoProvider or DoProviderConfig,
+// mutating status in place. secretNamespace is where the credentials
+// Secret is checked: the runner namespace for cluster profiles, the
+// config's own namespace for tenant profiles.
+func (r *DoProviderReconciler) validateProfile(ctx context.Context, obj runtime.Object, owner string,
+	spec dov1alpha1.DoProviderSpec, status *dov1alpha1.DoProviderStatus, generation int64, secretNamespace string,
+) error {
+	log := logf.FromContext(ctx)
+
+	if !pulumido.PackagePinned(spec.Package) {
+		r.Recorder.Eventf(obj, "Warning", "ProviderNotPinned",
+			"spec.package %q has no pinned version; operations are not reproducible", spec.Package)
+	}
+
+	// Schema fetch runs through the runner (a Job in-cluster), which also
+	// installs the pinned plugin into the shared cache when enabled — one
+	// step proves both schema and plugin availability.
+	schemaOK := true
+	schema, err := r.Schemas.Get(pulumido.WithOwner(ctx, owner), spec.Package, "")
+	if err != nil {
+		schemaOK = false
+		reason := schemaFailureReason(err)
+		setProfileCondition(status, generation, dov1alpha1.ConditionSchemaFetched, metav1.ConditionFalse, reason, compact(err.Error()))
+		setProfileCondition(status, generation, dov1alpha1.ConditionPluginReady, metav1.ConditionFalse, reason,
+			"plugin availability unknown while the schema cannot be fetched")
+		status.Plugin = &dov1alpha1.ProviderPluginStatus{Ready: false, CachePath: r.PluginCachePath}
+		log.Error(err, "provider schema fetch failed", "package", spec.Package)
+	} else {
+		setProfileCondition(status, generation, dov1alpha1.ConditionSchemaFetched, metav1.ConditionTrue, "SchemaFetched",
+			fmt.Sprintf("schema for %s@%s fetched", schema.Name, schema.Version))
+		setProfileCondition(status, generation, dov1alpha1.ConditionPluginReady, metav1.ConditionTrue, "PluginAvailable",
+			pluginReadyMessage(r.PluginCachePath))
+		status.Package = &dov1alpha1.ProviderPackageStatus{Name: schema.Name, Version: schema.Version}
+		status.Plugin = &dov1alpha1.ProviderPluginStatus{Ready: true, CachePath: r.PluginCachePath}
+	}
+
+	credsOK, credsErr := r.checkCredentials(ctx, spec, status, generation, secretNamespace)
+	if credsErr != nil {
+		return credsErr
+	}
+
+	if schemaOK && credsOK {
+		setProfileCondition(status, generation, dov1alpha1.ConditionReady, metav1.ConditionTrue, "Ready", "provider profile validated")
+	} else {
+		reason := "SchemaUnavailable"
+		if schemaOK {
+			reason = "CredentialsNotReady"
+		}
+		setProfileCondition(status, generation, dov1alpha1.ConditionReady, metav1.ConditionFalse, reason,
+			"one or more provider checks failed; see the other conditions")
+	}
+	status.ObservedGeneration = generation
+	return nil
+}
+
+// checkCredentials verifies the configured Secret exists in
+// secretNamespace and holds every required key. The bool is the condition
 // outcome; the error is only for API failures worth a retry.
-func (r *DoProviderReconciler) checkCredentials(ctx context.Context, provider *dov1alpha1.DoProvider) (bool, error) {
-	ref := provider.Spec.CredentialsSecretRef
+func (r *DoProviderReconciler) checkCredentials(ctx context.Context, spec dov1alpha1.DoProviderSpec,
+	status *dov1alpha1.DoProviderStatus, generation int64, secretNamespace string,
+) (bool, error) {
+	ref := spec.CredentialsSecretRef
 	if ref == nil {
-		setProviderCondition(provider, dov1alpha1.ConditionCredentialsReady, metav1.ConditionTrue, "NotRequired",
+		setProfileCondition(status, generation, dov1alpha1.ConditionCredentialsReady, metav1.ConditionTrue, "NotRequired",
 			"no credentials Secret configured; the deployment-wide default applies")
 		return true, nil
 	}
-	if r.RunnerNamespace == "" {
-		setProviderCondition(provider, dov1alpha1.ConditionCredentialsReady, metav1.ConditionTrue, "CheckSkipped",
+	if secretNamespace == "" {
+		setProfileCondition(status, generation, dov1alpha1.ConditionCredentialsReady, metav1.ConditionTrue, "CheckSkipped",
 			"no runner namespace configured (dev mode); Secret not verified")
 		return true, nil
 	}
 
 	secret := &corev1.Secret{}
-	err := r.reader().Get(ctx, types.NamespacedName{Namespace: r.RunnerNamespace, Name: ref.Name}, secret)
+	err := r.reader().Get(ctx, types.NamespacedName{Namespace: secretNamespace, Name: ref.Name}, secret)
 	switch {
 	case err == nil:
 		var missing []string
-		for _, key := range provider.Spec.CredentialKeys {
+		for _, key := range spec.CredentialKeys {
 			if _, ok := secret.Data[key]; !ok {
 				missing = append(missing, key)
 			}
 		}
 		if len(missing) > 0 {
 			sort.Strings(missing)
-			setProviderCondition(provider, dov1alpha1.ConditionCredentialsReady, metav1.ConditionFalse, "KeysMissing",
-				fmt.Sprintf("secret %s/%s is missing keys: %s", r.RunnerNamespace, ref.Name, strings.Join(missing, ", ")))
+			setProfileCondition(status, generation, dov1alpha1.ConditionCredentialsReady, metav1.ConditionFalse, "KeysMissing",
+				fmt.Sprintf("secret %s/%s is missing keys: %s", secretNamespace, ref.Name, strings.Join(missing, ", ")))
 			return false, nil
 		}
-		setProviderCondition(provider, dov1alpha1.ConditionCredentialsReady, metav1.ConditionTrue, "CredentialsReady",
-			fmt.Sprintf("secret %s/%s holds all required keys", r.RunnerNamespace, ref.Name))
+		setProfileCondition(status, generation, dov1alpha1.ConditionCredentialsReady, metav1.ConditionTrue, "CredentialsReady",
+			fmt.Sprintf("secret %s/%s holds all required keys", secretNamespace, ref.Name))
 		return true, nil
 	case client.IgnoreNotFound(err) == nil:
-		setProviderCondition(provider, dov1alpha1.ConditionCredentialsReady, metav1.ConditionFalse, "SecretNotFound",
-			fmt.Sprintf("secret %s/%s not found", r.RunnerNamespace, ref.Name))
+		setProfileCondition(status, generation, dov1alpha1.ConditionCredentialsReady, metav1.ConditionFalse, "SecretNotFound",
+			fmt.Sprintf("secret %s/%s not found", secretNamespace, ref.Name))
 		return false, nil
 	default:
 		return false, err
@@ -188,13 +205,15 @@ func pluginReadyMessage(cachePath string) string {
 	return "plugin available via the shared cache at " + cachePath
 }
 
-func setProviderCondition(provider *dov1alpha1.DoProvider, condType string, status metav1.ConditionStatus, reason, message string) {
-	meta.SetStatusCondition(&provider.Status.Conditions, metav1.Condition{
+func setProfileCondition(profileStatus *dov1alpha1.DoProviderStatus, generation int64,
+	condType string, status metav1.ConditionStatus, reason, message string,
+) {
+	meta.SetStatusCondition(&profileStatus.Conditions, metav1.Condition{
 		Type:               condType,
 		Status:             status,
 		Reason:             reason,
 		Message:            message,
-		ObservedGeneration: provider.Generation,
+		ObservedGeneration: generation,
 	})
 }
 

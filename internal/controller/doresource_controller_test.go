@@ -37,10 +37,12 @@ import (
 
 // fakeRunner implements pulumido.Runner in memory.
 type fakeRunner struct {
-	created     map[string]map[string]any
-	createdPkgs []string
-	patched     []map[string]any
-	deleted     []string
+	created      map[string]map[string]any
+	createdPkgs  []string
+	createdProps []map[string]any
+	secretInputs []pulumido.SecretInput
+	patched      []map[string]any
+	deleted      []string
 
 	// componentMode makes FetchSchema report tokens as components and
 	// records engine operations.
@@ -68,8 +70,10 @@ func (f *fakeRunner) DeleteComponent(_ context.Context, _, _ string, engineState
 	return nil
 }
 
-func (f *fakeRunner) Create(_ context.Context, token, pkg string, props map[string]any) (string, map[string]any, error) {
+func (f *fakeRunner) Create(ctx context.Context, token, pkg string, props map[string]any) (string, map[string]any, error) {
 	f.createdPkgs = append(f.createdPkgs, pkg)
+	f.createdProps = append(f.createdProps, props)
+	f.secretInputs = pulumido.SecretInputsFromContext(ctx)
 	id := fmt.Sprintf("fake-id-%d", len(f.created)+1)
 	state := map[string]any{"id": id}
 	maps.Copy(state, props)
