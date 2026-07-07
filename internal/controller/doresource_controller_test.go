@@ -40,6 +40,31 @@ type fakeRunner struct {
 	created map[string]map[string]any
 	patched []map[string]any
 	deleted []string
+
+	// componentMode makes FetchSchema report tokens as components and
+	// records engine operations.
+	componentMode    bool
+	componentCreates []map[string]any
+	componentUpdates []map[string]any
+	componentDeletes [][]byte
+}
+
+func (f *fakeRunner) CreateComponent(_ context.Context, token, _ string, props map[string]any) (string, map[string]any, []byte, error) {
+	f.componentCreates = append(f.componentCreates, props)
+	return "urn:pulumi:dev::pdo::" + token + "::res",
+		map[string]any{"endpoint": "svc.local:8080"},
+		[]byte(`{"version":3,"deployment":{"resources":[]}}`), nil
+}
+
+func (f *fakeRunner) UpdateComponent(_ context.Context, _, _ string, props map[string]any, _ []byte) (map[string]any, []byte, error) {
+	f.componentUpdates = append(f.componentUpdates, props)
+	return map[string]any{"endpoint": "svc.local:8080", "updated": true},
+		[]byte(`{"version":3,"deployment":{"resources":["updated"]}}`), nil
+}
+
+func (f *fakeRunner) DeleteComponent(_ context.Context, _, _ string, engineState []byte) error {
+	f.componentDeletes = append(f.componentDeletes, engineState)
+	return nil
 }
 
 func (f *fakeRunner) Create(_ context.Context, token, _ string, props map[string]any) (string, map[string]any, error) {
@@ -75,6 +100,7 @@ func (f *fakeRunner) FetchSchema(_ context.Context, _, token string) (*pulumido.
 		Version: "4.21.0",
 		Resources: map[string]pulumido.ResourceSchema{
 			token: {
+				IsComponent: f.componentMode,
 				InputProperties: map[string]pulumido.PropertySchema{
 					"length": {Type: "integer"},
 					"prefix": {Type: "string"},

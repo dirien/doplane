@@ -1,22 +1,44 @@
-# Runner image for pulumi-do-operator Jobs: pulumi CLI, jq and pre-installed
-# provider plugins. Every `pulumi do` operation runs in a short-lived Job pod
-# based on this image, isolated from the controller manager.
-FROM pulumi/pulumi-base:3.250.0
+# Runner image for pulumi-do-operator Jobs: the pdo-runner binary, pulumi
+# CLI, language toolchains and pre-installed provider plugins. Every
+# operation runs in a short-lived Job pod as a single typed pdo-runner
+# invocation (no shell scripts), isolated from the controller manager.
+#
+# The full pulumi/pulumi base (rather than pulumi-base) ships the Node.js,
+# Python and Go toolchains that source-published component packages (e.g.
+# from the Pulumi Cloud private registry) need to compile on first use.
+FROM golang:1.26 AS builder
+ARG TARGETOS
+ARG TARGETARCH
+WORKDIR /workspace
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd/runner/ cmd/runner/
+COPY internal/runnerops/ internal/runnerops/
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -o pdo-runner ./cmd/runner
+
+FROM pulumi/pulumi:3.250.0
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends jq ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Plugins are baked in so runner pods work with a read-only root filesystem
-# and never download at reconcile time. Versions must match the ones pinned
-# in DoResource spec.package fields (and the registry schema they validate
-# against).
+COPY --from=builder /workspace/pdo-runner /pdo-runner
+
+# Common plugins are baked in so runner pods work without downloads at
+# reconcile time. Versions must match the ones pinned in DoResource
+# spec.package fields (and the registry schema they validate against).
+# Additional plugins (and compiled component packages) install on demand
+# into the writable per-pod PULUMI_HOME under /tmp.
 ENV PULUMI_HOME=/opt/pulumi-home \
     PULUMI_SKIP_UPDATE_CHECK=true
 ARG AWS_PLUGIN_VERSION=7.34.0
+ARG DIGITALOCEAN_PLUGIN_VERSION=4.73.0
 ARG RANDOM_PLUGIN_VERSION=4.21.0
+ARG KUBERNETES_PLUGIN_VERSION=4.23.0
 RUN pulumi plugin install resource random ${RANDOM_PLUGIN_VERSION} \
     && pulumi plugin install resource aws ${AWS_PLUGIN_VERSION} \
+    && pulumi plugin install resource digitalocean ${DIGITALOCEAN_PLUGIN_VERSION} \
+    && pulumi plugin install resource kubernetes ${KUBERNETES_PLUGIN_VERSION} \
     && chmod -R a+rX /opt/pulumi-home
 
 USER 65532:65532

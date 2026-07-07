@@ -1,0 +1,87 @@
+# Level 6 — a wider no-cloud graph that exercises fan-in dependencies,
+# object paths, array paths and value propagation without any cloud account.
+#
+#   env ─┬──────────────> shuffle ──> release
+#        └──> token ────────┘           ▲
+#              └───────────────────────┘
+#
+# The shuffle resource waits for two upstream resources and writes into both
+# keepers.env and inputs[2]. The release resource fans in values from all
+# upstream resources; changing any upstream output changes its resolved
+# inputs and triggers a patch.
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoResource
+metadata:
+  name: graph-env
+spec:
+  type: random:index/randomPet:RandomPet
+  package: random@4.21.0
+  properties:
+    length: 1
+    prefix: env
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoResource
+metadata:
+  name: graph-token
+spec:
+  type: random:index/randomString:RandomString
+  package: random@4.21.0
+  properties:
+    length: 8
+    lower: true
+    minLower: 4
+    minNumeric: 2
+    numeric: true
+    special: false
+    upper: false
+  references:
+    - toPath: keepers.env
+      from:
+        name: graph-env
+        fieldPath: status.id
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoResource
+metadata:
+  name: graph-shuffle
+spec:
+  type: random:index/randomShuffle:RandomShuffle
+  package: random@4.21.0
+  properties:
+    inputs:
+      - api
+      - worker
+      - pending-token
+    resultCount: 2
+  references:
+    - toPath: keepers.env
+      from:
+        name: graph-env
+        fieldPath: status.id
+    - toPath: inputs[2]
+      from:
+        name: graph-token
+        fieldPath: status.outputs.result
+      template: token-${value}
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoResource
+metadata:
+  name: graph-release
+spec:
+  type: random:index/randomPet:RandomPet
+  package: random@4.21.0
+  properties:
+    length: 2
+  references:
+    - toPath: prefix
+      from:
+        name: graph-shuffle
+        fieldPath: status.outputs.results[0]
+      template: release-${value}
+    - toPath: separator
+      from:
+        name: graph-env
+        fieldPath: status.id
+      template: "-${value}-"

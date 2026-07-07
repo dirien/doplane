@@ -14,15 +14,106 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package pulumido
+package runnerops
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
 	"strings"
 )
+
+// MaxEngineStateBytes bounds checkpoints handed around via Job env and the
+// CR status; larger states would strain etcd object limits.
+const MaxEngineStateBytes = 900 * 1024
+
+// PackageForToken derives the package name from a type token like
+// "aws:s3/bucketV2:BucketV2".
+func PackageForToken(token string) string {
+	if i := strings.Index(token, ":"); i > 0 {
+		return token[:i]
+	}
+	return token
+}
+
+// LastJSONObject extracts the final top-level JSON object from mixed CLI
+// output. `pulumi do` prints a human preamble and an echo of the inputs
+// before the resulting resource state; the state is always the last object.
+func LastJSONObject(out string) (map[string]any, error) {
+	var last map[string]any
+	found := false
+	for i := 0; i < len(out); i++ {
+		if out[i] != '{' || (i > 0 && out[i-1] != '\n') {
+			continue
+		}
+		dec := json.NewDecoder(strings.NewReader(out[i:]))
+		dec.UseNumber()
+		var m map[string]any
+		if err := dec.Decode(&m); err == nil {
+			last = m
+			found = true
+			i += int(dec.InputOffset()) - 1
+		}
+	}
+	if !found {
+		return nil, errors.New("no JSON object found in output")
+	}
+	return last, nil
+}
+
+// Truncate shortens s to at most n bytes for error messages.
+func Truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…(truncated)"
+}
+
+// ProviderErrorText extracts the provider's own error lines from CLI/pod
+// output (lines starting with "error"), appending any extra failure message.
+// Error classification runs against this text only — never against command
+// lines or echoed inputs, whose contents (e.g. a resource named
+// "not-found-test") would otherwise cause false classification.
+func ProviderErrorText(output, extra string) string {
+	var lines []string
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(strings.ToLower(line))
+		if strings.HasPrefix(trimmed, "error:") || strings.HasPrefix(trimmed, "error ") ||
+			strings.HasPrefix(trimmed, "[error]") {
+			lines = append(lines, trimmed)
+		}
+	}
+	if extra != "" {
+		lines = append(lines, strings.ToLower(extra))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// engineProgram renders the single-resource Pulumi YAML program. JSON is
+// valid YAML, so the program is emitted as JSON for robust quoting; `pulumi
+// package add` appends the packages section itself.
+func engineProgram(token string, props map[string]any) (string, error) {
+	if props == nil {
+		props = map[string]any{}
+	}
+	program := map[string]any{
+		"name":    "pdo",
+		"runtime": "yaml",
+		"resources": map[string]any{
+			"res": map[string]any{
+				"type":       token,
+				"properties": props,
+			},
+		},
+	}
+	raw, err := json.Marshal(program)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
 
 var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
@@ -61,7 +152,6 @@ func pclValue(v any, depth int) (string, error) {
 	case json.Number:
 		return t.String(), nil
 	case float64:
-		// Marshal via encoding/json so integral floats render without exponent.
 		raw, err := json.Marshal(t)
 		if err != nil {
 			return "", err

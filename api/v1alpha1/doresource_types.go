@@ -137,6 +137,14 @@ type DoResourceStatus struct {
 	// +optional
 	AppliedHash string `json:"appliedHash,omitempty"`
 
+	// EngineState holds the exported Pulumi engine checkpoint for component
+	// resources (which are orchestrated by an ephemeral engine instead of
+	// stateless CRUD). Persisted in etcd with the rest of this object and
+	// re-imported on update/delete.
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	EngineState *apiextensionsv1.JSON `json:"engineState,omitempty"`
+
 	// Conditions represent the latest available observations of the
 	// resource's state (Ready, Synced).
 	// +optional
@@ -150,6 +158,7 @@ type DoResourceStatus struct {
 // +kubebuilder:printcolumn:name="ID",type=string,JSONPath=`.status.id`
 // +kubebuilder:printcolumn:name="READY",type=string,JSONPath=`.status.conditions[?(@.type=='Ready')].status`
 // +kubebuilder:printcolumn:name="SYNCED",type=string,JSONPath=`.status.conditions[?(@.type=='Synced')].status`
+// +kubebuilder:printcolumn:name="REASON",type=string,JSONPath=`.status.conditions[?(@.type=='Synced')].reason`
 // +kubebuilder:printcolumn:name="AGE",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // DoResource is the Schema for the doresources API. It represents a single

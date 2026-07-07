@@ -156,6 +156,13 @@ func (r *DoResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
+	// Component resources are orchestrated through an ephemeral engine
+	// (stateless `pulumi do` cannot construct them); the exported
+	// checkpoint is persisted in status.engineState.
+	if schema.Resources[token].IsComponent {
+		return r.reconcileComponent(ctx, res, token, pkg, props, hash)
+	}
+
 	switch {
 	case res.Status.ID == "":
 		log.Info("creating external resource", "type", token)
@@ -222,6 +229,39 @@ func (r *DoResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 }
 
+// reconcileComponent drives a component resource through the ephemeral
+// engine: create when no state exists, update on hash changes, and no drift
+// reads (the engine has no cheap read).
+func (r *DoResourceReconciler) reconcileComponent(ctx context.Context, res *dov1alpha1.DoResource, token, pkg string, props map[string]any, hash string) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+	switch {
+	case res.Status.ID == "" || res.Status.EngineState == nil:
+		log.Info("constructing component resource", "type", token)
+		id, outputs, state, err := r.Runner.CreateComponent(ctx, token, pkg, props)
+		if err != nil {
+			return r.markSyncFailed(ctx, res, "CreateFailed", err, true)
+		}
+		r.Recorder.Eventf(res, "Normal", "Created", "Constructed component %s %q", token, id)
+		res.Status.EngineState = &apiextensionsv1.JSON{Raw: state}
+		return r.markSynced(ctx, res, id, outputs, hash)
+
+	case res.Status.AppliedHash != hash:
+		log.Info("updating component resource", "type", token, "id", res.Status.ID)
+		outputs, state, err := r.Runner.UpdateComponent(ctx, token, pkg, props, res.Status.EngineState.Raw)
+		if err != nil {
+			return r.markSyncFailed(ctx, res, "UpdateFailed", err, true)
+		}
+		r.Recorder.Eventf(res, "Normal", "Updated", "Updated component %s %q", token, res.Status.ID)
+		res.Status.EngineState = &apiextensionsv1.JSON{Raw: state}
+		return r.markSynced(ctx, res, res.Status.ID, outputs, hash)
+
+	default:
+		// Settled: no engine-side read; status already reflects the last
+		// applied state.
+		return r.markSynced(ctx, res, res.Status.ID, nil, hash)
+	}
+}
+
 // reconcileDelete tears down the external resource once no dependents
 // remain, then releases the finalizer.
 func (r *DoResourceReconciler) reconcileDelete(ctx context.Context, res *dov1alpha1.DoResource) (ctrl.Result, error) {
@@ -247,7 +287,14 @@ func (r *DoResourceReconciler) reconcileDelete(ctx context.Context, res *dov1alp
 	token, pkg := res.Spec.Type, res.Spec.Package
 	if res.Spec.DeletionPolicy != dov1alpha1.DeletionOrphan && res.Status.ID != "" {
 		log.Info("deleting external resource", "type", token, "id", res.Status.ID)
-		err := r.Runner.Delete(ctx, token, pkg, res.Status.ID)
+		var err error
+		if res.Status.EngineState != nil {
+			// Component resource: destroy through the engine from the
+			// persisted checkpoint.
+			err = r.Runner.DeleteComponent(ctx, token, pkg, res.Status.EngineState.Raw)
+		} else {
+			err = r.Runner.Delete(ctx, token, pkg, res.Status.ID)
+		}
 		switch {
 		case err == nil:
 			r.Recorder.Eventf(res, "Normal", "Deleted", "Deleted external resource %s %q", token, res.Status.ID)
@@ -288,8 +335,15 @@ func (r *DoResourceReconciler) markSynced(ctx context.Context, res *dov1alpha1.D
 
 // markSyncFailed records a failure condition. When retryOp is true the error
 // is returned so controller-runtime backs off and retries; otherwise the
-// failure is terminal until the spec changes.
+// failure is terminal until the spec changes. When the runner supplied a
+// typed failure code it becomes the condition reason, so `kubectl get`
+// shows the actual failure class (e.g. RegistryAuthMissing) instead of a
+// generic phase name.
 func (r *DoResourceReconciler) markSyncFailed(ctx context.Context, res *dov1alpha1.DoResource, reason string, opErr error, retryOp bool) (ctrl.Result, error) {
+	var coded *pulumido.CodedError
+	if errors.As(opErr, &coded) && coded.Code != "" {
+		reason = coded.Code
+	}
 	logf.FromContext(ctx).Error(opErr, "reconcile failed", "reason", reason)
 	r.Recorder.Eventf(res, "Warning", reason, "%s", compact(opErr.Error()))
 	setCondition(res, dov1alpha1.ConditionSynced, metav1.ConditionFalse, reason, compact(opErr.Error()))

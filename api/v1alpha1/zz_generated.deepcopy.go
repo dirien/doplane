@@ -360,6 +360,11 @@ func (in *DoResourceStatus) DeepCopyInto(out *DoResourceStatus) {
 		*out = new(v1.JSON)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.EngineState != nil {
+		in, out := &in.EngineState, &out.EngineState
+		*out = new(v1.JSON)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]metav1.Condition, len(*in))

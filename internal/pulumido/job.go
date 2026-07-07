@@ -36,12 +36,18 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/ptr"
+
+	"github.com/dirien/pulumi-do-operator/internal/runnerops"
 )
 
 const (
 	labelManagedBy = "app.kubernetes.io/managed-by"
 	labelVerb      = "do.pulumi.com/verb"
 	operatorName   = "pulumi-do-operator"
+
+	// bakedPluginsDir is where the runner image keeps its pre-installed
+	// plugins; the pdo-runner binary seeds them into each workspace.
+	bakedPluginsDir = "/opt/pulumi-home/plugins"
 )
 
 // ownerCtxKey carries the identity of the object an operation is performed
@@ -61,18 +67,20 @@ func ownerFromContext(ctx context.Context) string {
 	return owner
 }
 
-// JobRunner runs every `pulumi do` operation as a dedicated Kubernetes Job
-// so provider plugins execute in their own hardened container with their own
-// resource limits and credentials, isolated from the controller manager.
+// JobRunner ships every operation to a dedicated, hardened Kubernetes Job
+// running the pdo-runner binary, so provider plugins execute in their own
+// container with their own resource limits and credentials, isolated from
+// the controller manager. The operation travels as one JSON document; the
+// outcome comes back as one typed envelope in the pod log.
 type JobRunner struct {
 	Clientset kubernetes.Interface
 	// Namespace is where runner Jobs are created (the operator namespace).
 	Namespace string
-	// Image is the runner image containing the pulumi CLI, jq and provider
-	// plugins.
+	// Image is the runner image containing the pdo-runner binary, the
+	// pulumi CLI, language toolchains and baked provider plugins.
 	Image string
 	// CredentialsSecret is an optional Secret whose keys become environment
-	// variables of the runner (cloud provider credentials).
+	// variables of the runner (cloud provider credentials, registry token).
 	CredentialsSecret string
 	// Timeout bounds a single operation end to end.
 	Timeout time.Duration
@@ -89,155 +97,126 @@ func (r *JobRunner) timeout() time.Duration {
 
 // Create implements Runner.
 func (r *JobRunner) Create(ctx context.Context, token, pkg string, props map[string]any) (string, map[string]any, error) {
-	out, err := r.runDo(ctx, token, pkg, "create", "", props)
+	res, err := r.executeOp(ctx, runnerops.Op{Verb: runnerops.VerbCreate, Token: token, Package: pkg, Properties: props})
 	if err != nil {
 		return "", nil, err
 	}
-	state, err := lastJSONObject(out)
-	if err != nil {
-		return "", nil, fmt.Errorf("parsing create output: %w (output: %s)", err, truncate(out, 2000))
-	}
-	id, err := stateAndID(state, out)
-	if err != nil {
-		return "", nil, err
-	}
-	return id, state, nil
+	return res.ID, res.State, nil
 }
 
 // Patch implements Runner.
 func (r *JobRunner) Patch(ctx context.Context, token, pkg, id string, props map[string]any) (map[string]any, error) {
-	out, err := r.runDo(ctx, token, pkg, "patch", id, props)
+	res, err := r.executeOp(ctx, runnerops.Op{Verb: runnerops.VerbPatch, Token: token, Package: pkg, ID: id, Properties: props})
 	if err != nil {
 		return nil, err
 	}
-	state, err := lastJSONObject(out)
-	if err != nil {
-		return nil, fmt.Errorf("parsing patch output: %w (output: %s)", err, truncate(out, 2000))
-	}
-	return state, nil
+	return res.State, nil
 }
 
 // Read implements Runner.
 func (r *JobRunner) Read(ctx context.Context, token, pkg, id string) (map[string]any, error) {
-	out, err := r.runDo(ctx, token, pkg, "read", id, nil)
+	res, err := r.executeOp(ctx, runnerops.Op{Verb: runnerops.VerbRead, Token: token, Package: pkg, ID: id})
 	if err != nil {
 		return nil, err
 	}
-	state, err := lastJSONObject(out)
-	if err != nil {
-		return nil, fmt.Errorf("parsing read output: %w (output: %s)", err, truncate(out, 2000))
-	}
-	return state, nil
+	return res.State, nil
 }
 
 // Delete implements Runner.
 func (r *JobRunner) Delete(ctx context.Context, token, pkg, id string) error {
-	_, err := r.runDo(ctx, token, pkg, "delete", id, nil)
+	_, err := r.executeOp(ctx, runnerops.Op{Verb: runnerops.VerbDelete, Token: token, Package: pkg, ID: id})
 	return err
 }
 
-// FetchSchema implements Runner. The runner writes `pulumi package
-// get-schema` output to a file first (so a CLI failure is not masked by the
-// pipeline) and then trims the (potentially tens of MB) provider schema down
-// to the single requested resource with jq, keeping the Job's log output
-// well under kubelet log-rotation limits.
+// FetchSchema implements Runner.
 func (r *JobRunner) FetchSchema(ctx context.Context, pkg, token string) (*PackageSchema, error) {
-	script := fmt.Sprintf(
-		"pulumi package get-schema %s > /tmp/schema.json && jq -c --arg t %s '{name, version, resources: (if .resources[$t] then {($t): .resources[$t]} else {} end)}' /tmp/schema.json",
-		shellQuote(pkg), shellQuote(token))
-	out, err := r.runJob(ctx, "schema", script, nil)
-	if err != nil {
-		return nil, fmt.Errorf("fetching schema for %s: %w", pkg, err)
-	}
-	obj, err := lastJSONObject(out)
-	if err != nil {
-		return nil, fmt.Errorf("parsing schema job output: %w (output: %s)", err, truncate(out, 2000))
-	}
-	raw, err := json.Marshal(obj)
+	res, err := r.executeOp(ctx, runnerops.Op{Verb: runnerops.VerbSchema, Token: token, Package: pkg})
 	if err != nil {
 		return nil, err
 	}
 	var s PackageSchema
-	if err := json.Unmarshal(raw, &s); err != nil {
+	if err := json.Unmarshal(res.Schema, &s); err != nil {
 		return nil, fmt.Errorf("decoding schema for %s: %w", pkg, err)
 	}
 	return &s, nil
 }
 
-// runDo executes one `pulumi do` verb in a Job. Properties, when present,
-// are handed to the pod via an environment variable and written to a file
-// inside the container, avoiding any shared filesystem with the manager.
-func (r *JobRunner) runDo(ctx context.Context, token, pkg, verb, id string, props map[string]any) (string, error) {
-	inputFile := ""
-	var env []corev1.EnvVar
-	if len(props) > 0 {
-		pcl, err := MarshalPCL(props)
-		if err != nil {
-			return "", err
-		}
-		inputFile = "/tmp/input.pp"
-		env = append(env, corev1.EnvVar{Name: "PCL_INPUT", Value: pcl})
+// CreateComponent implements Runner.
+func (r *JobRunner) CreateComponent(ctx context.Context, token, pkg string, props map[string]any) (string, map[string]any, []byte, error) {
+	res, err := r.executeOp(ctx, runnerops.Op{Verb: runnerops.VerbEngineUp, Token: token, Package: pkg, Properties: props})
+	if err != nil {
+		return "", nil, nil, err
 	}
-	args := doArgs(token, pkg, verb, id, inputFile)
-	quoted := make([]string, 0, len(args))
-	for _, a := range args {
-		quoted = append(quoted, shellQuote(a))
+	return res.ID, res.Outputs, res.EngineState, nil
+}
+
+// UpdateComponent implements Runner.
+func (r *JobRunner) UpdateComponent(ctx context.Context, token, pkg string, props map[string]any, engineState []byte) (map[string]any, []byte, error) {
+	state, err := engineStateJSON(engineState)
+	if err != nil {
+		return nil, nil, err
 	}
-	script := "exec pulumi " + strings.Join(quoted, " ")
-	if inputFile != "" {
-		script = `printf '%s' "$PCL_INPUT" > /tmp/input.pp && ` + script
+	res, err := r.executeOp(ctx, runnerops.Op{Verb: runnerops.VerbEngineUp, Token: token, Package: pkg, Properties: props, EngineState: state})
+	if err != nil {
+		return nil, nil, err
 	}
-	return r.runJob(ctx, verb, script, env)
+	return res.Outputs, res.EngineState, nil
+}
+
+// DeleteComponent implements Runner.
+func (r *JobRunner) DeleteComponent(ctx context.Context, token, pkg string, engineState []byte) error {
+	state, err := engineStateJSON(engineState)
+	if err != nil {
+		return err
+	}
+	_, err = r.executeOp(ctx, runnerops.Op{Verb: runnerops.VerbEngineDestroy, Token: token, Package: pkg, EngineState: state})
+	return err
 }
 
 // jobName derives a deterministic name from the owning object and the exact
-// operation (script + inputs), so a retried reconcile adopts the previous
-// attempt's Job instead of re-running the cloud mutation. Operations without
-// an owner tag fall back to random names — except schema fetches, which are
-// safely shareable because they are read-only and fully determined by the
-// script.
-func (r *JobRunner) jobName(ctx context.Context, verb, script string, env []corev1.EnvVar) string {
+// operation document, so a retried reconcile adopts the previous attempt's
+// Job instead of re-running the cloud mutation. Operations without an owner
+// tag fall back to random names — except schema fetches, which are safely
+// shareable because they are read-only and fully determined by the op.
+func (r *JobRunner) jobName(ctx context.Context, verb, opJSON string) string {
 	owner := ownerFromContext(ctx)
-	if owner == "" && verb != "schema" {
+	if owner == "" && verb != runnerops.VerbSchema {
 		return fmt.Sprintf("do-%s-%s", verb, rand.String(8))
 	}
 	h := sha256.New()
 	_, _ = h.Write([]byte(owner))
 	_, _ = h.Write([]byte{0})
-	_, _ = h.Write([]byte(script))
-	for _, e := range env {
-		_, _ = h.Write([]byte{0})
-		_, _ = h.Write([]byte(e.Name))
-		_, _ = h.Write([]byte{'='})
-		_, _ = h.Write([]byte(e.Value))
-	}
+	_, _ = h.Write([]byte(opJSON))
 	return fmt.Sprintf("do-%s-%s", verb, hex.EncodeToString(h.Sum(nil))[:16])
 }
 
-// runJob ensures a Job for the script exists (creating or adopting it),
-// waits for it to finish and returns the pod log output. The Job is deleted
-// only once a terminal outcome has been observed and its output secured;
-// otherwise it is left in place so a later reconcile can adopt it.
-func (r *JobRunner) runJob(ctx context.Context, verb, script string, env []corev1.EnvVar) (string, error) {
-	name := r.jobName(ctx, verb, script, env)
-	job := r.buildJob(name, verb, script, env)
+// executeOp ensures a Job for the operation exists (creating or adopting
+// it), waits for it to finish and decodes the result envelope. The Job is
+// deleted only once a terminal outcome has been observed and its output
+// secured; otherwise it is left in place so a later reconcile can adopt it.
+func (r *JobRunner) executeOp(ctx context.Context, op runnerops.Op) (runnerops.Result, error) {
+	opJSON, err := json.Marshal(op)
+	if err != nil {
+		return runnerops.Result{}, err
+	}
+	name := r.jobName(ctx, op.Verb, string(opJSON))
+	job := r.buildJob(name, op.Verb, string(opJSON))
 
 	ctx, cancel := context.WithTimeout(ctx, r.timeout())
 	defer cancel()
 
 	if _, err := r.Clientset.BatchV1().Jobs(r.Namespace).Create(ctx, job, metav1.CreateOptions{}); err != nil {
 		if !apierrors.IsAlreadyExists(err) {
-			return "", fmt.Errorf("creating runner job %s: %w", name, err)
+			return runnerops.Result{}, fmt.Errorf("creating runner job %s: %w", name, err)
 		}
 		// Adopting the Job left by a previous, interrupted attempt of this
-		// exact operation (same owner, script and inputs).
+		// exact operation (same owner and op document).
 	}
 	cleanup := false
 	defer func() {
 		if !cleanup {
 			return // leave the Job for adoption by the next attempt
 		}
-		// Use a fresh context: the operation context may already be done.
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cleanupCancel()
 		_ = r.Clientset.BatchV1().Jobs(r.Namespace).Delete(cleanupCtx, name, metav1.DeleteOptions{
@@ -247,7 +226,7 @@ func (r *JobRunner) runJob(ctx context.Context, verb, script string, env []corev
 
 	failed := false
 	var failMsg string
-	err := wait.PollUntilContextCancel(ctx, 2*time.Second, true, func(ctx context.Context) (bool, error) {
+	err = wait.PollUntilContextCancel(ctx, 2*time.Second, true, func(ctx context.Context) (bool, error) {
 		j, err := r.Clientset.BatchV1().Jobs(r.Namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			if apierrors.IsNotFound(err) {
@@ -271,27 +250,35 @@ func (r *JobRunner) runJob(ctx context.Context, verb, script string, env []corev
 		return false, nil
 	})
 	if err != nil {
-		return "", fmt.Errorf("waiting for runner job %s (%s): %w", name, verb, err)
+		return runnerops.Result{}, fmt.Errorf("waiting for runner job %s (%s): %w", name, op.Verb, err)
 	}
 
 	logs, logsErr := r.podLogs(name)
 	if failed {
+		// The pdo-runner binary exits non-zero only for infrastructure
+		// problems (op failures travel in the envelope), so a failed Job is
+		// an infra failure. Classify only as a safety net.
 		cleanup = true
-		base := fmt.Errorf("runner job %s (%s) failed: %s: %s", name, verb, failMsg, truncate(strings.TrimSpace(logs), 4000))
-		if sentinel := classifyText(providerErrorText(logs, failMsg)); sentinel != nil {
-			return logs, fmt.Errorf("%w: %w", sentinel, base)
+		base := fmt.Errorf("runner job %s (%s) failed: %s: %s", name, op.Verb, failMsg,
+			runnerops.Truncate(strings.TrimSpace(logs), 4000))
+		if sentinel := classifyInfraFailure(logs, failMsg); sentinel != nil {
+			return runnerops.Result{}, fmt.Errorf("%w: %w", sentinel, base)
 		}
-		return logs, base
+		return runnerops.Result{}, base
 	}
 	if logsErr != nil {
 		// The operation succeeded but its result is unreadable right now.
 		// Keep the Job (TTL is the backstop) so the retry re-reads the same
 		// result instead of re-running the mutation.
-		return "", fmt.Errorf("%w: runner job %s (%s) completed but its logs could not be read: %w",
-			ErrOutputUnavailable, name, verb, logsErr)
+		return runnerops.Result{}, fmt.Errorf("%w: runner job %s (%s) completed but its logs could not be read: %w",
+			ErrOutputUnavailable, name, op.Verb, logsErr)
 	}
 	cleanup = true
-	return logs, nil
+	res, err := decodeEnvelope(logs)
+	if err != nil {
+		return runnerops.Result{}, err
+	}
+	return res, resultErr(res)
 }
 
 // podLogs fetches the logs of the Job's most recent pod, retrying transient
@@ -334,14 +321,12 @@ func (r *JobRunner) podLogs(jobName string) (string, error) {
 	return "", lastErr
 }
 
-func (r *JobRunner) buildJob(name, verb, script string, env []corev1.EnvVar) *batchv1.Job {
-	env = append(env,
-		corev1.EnvVar{Name: "PULUMI_SKIP_UPDATE_CHECK", Value: "true"},
-		// A file backend keeps `pulumi do` fully offline with respect to
-		// Pulumi Cloud (no state is written; do is stateless).
-		corev1.EnvVar{Name: "PULUMI_BACKEND_URL", Value: "file:///tmp"},
-		corev1.EnvVar{Name: "HOME", Value: "/tmp"},
-	)
+func (r *JobRunner) buildJob(name, verb, opJSON string) *batchv1.Job {
+	env := []corev1.EnvVar{
+		{Name: "PDO_OP", Value: opJSON},
+		{Name: "PDO_BAKED_PLUGINS", Value: bakedPluginsDir},
+		{Name: "PULUMI_SKIP_UPDATE_CHECK", Value: "true"},
+	}
 	var envFrom []corev1.EnvFromSource
 	if r.CredentialsSecret != "" {
 		envFrom = append(envFrom, corev1.EnvFromSource{
@@ -383,7 +368,7 @@ func (r *JobRunner) buildJob(name, verb, script string, env []corev1.EnvVar) *ba
 					Containers: []corev1.Container{{
 						Name:    "pulumi-do",
 						Image:   r.Image,
-						Command: []string{"/bin/sh", "-ec", script},
+						Command: []string{"/pdo-runner"},
 						Env:     env,
 						EnvFrom: envFrom,
 						SecurityContext: &corev1.SecurityContext{
@@ -410,9 +395,4 @@ func (r *JobRunner) buildJob(name, verb, script string, env []corev1.EnvVar) *ba
 			},
 		},
 	}
-}
-
-// shellQuote makes a string safe to splice into a /bin/sh -c script.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

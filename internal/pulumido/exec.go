@@ -17,35 +17,25 @@ limitations under the License.
 package pulumido
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
-	"os"
-	"os/exec"
-	"strings"
-	"syscall"
 	"time"
+
+	"github.com/dirien/pulumi-do-operator/internal/runnerops"
 )
 
-// ExecRunner executes `pulumi do` with a local pulumi binary. It is intended
-// for development (`make run`); in-cluster the JobRunner is used instead so
-// provider plugins run isolated from the manager.
+// ExecRunner executes runner operations in-process with a local pulumi
+// binary. It is intended for development (`make run`); in-cluster the
+// JobRunner is used instead so provider plugins run isolated from the
+// manager. Both run the exact same runnerops code.
 type ExecRunner struct {
 	// PulumiBin is the pulumi executable; defaults to "pulumi" on PATH.
 	PulumiBin string
-	// Timeout bounds a single CLI invocation.
+	// Timeout bounds a single operation.
 	Timeout time.Duration
 }
 
 var _ Runner = (*ExecRunner)(nil)
-
-func (r *ExecRunner) bin() string {
-	if r.PulumiBin != "" {
-		return r.PulumiBin
-	}
-	return "pulumi"
-}
 
 func (r *ExecRunner) timeout() time.Duration {
 	if r.Timeout > 0 {
@@ -54,132 +44,88 @@ func (r *ExecRunner) timeout() time.Duration {
 	return 10 * time.Minute
 }
 
+func (r *ExecRunner) execute(ctx context.Context, op runnerops.Op) (runnerops.Result, error) {
+	ctx, cancel := context.WithTimeout(ctx, r.timeout())
+	defer cancel()
+	ops := &runnerops.Runner{PulumiBin: r.PulumiBin}
+	res := ops.Execute(ctx, op)
+	return res, resultErr(res)
+}
+
 // Create implements Runner.
 func (r *ExecRunner) Create(ctx context.Context, token, pkg string, props map[string]any) (string, map[string]any, error) {
-	out, err := r.runWithInput(ctx, token, pkg, "create", "", props)
+	res, err := r.execute(ctx, runnerops.Op{Verb: runnerops.VerbCreate, Token: token, Package: pkg, Properties: props})
 	if err != nil {
 		return "", nil, err
 	}
-	state, err := lastJSONObject(out)
-	if err != nil {
-		return "", nil, fmt.Errorf("parsing create output: %w (output: %s)", err, truncate(out, 2000))
-	}
-	id, err := stateAndID(state, out)
-	if err != nil {
-		return "", nil, err
-	}
-	return id, state, nil
+	return res.ID, res.State, nil
 }
 
 // Patch implements Runner.
 func (r *ExecRunner) Patch(ctx context.Context, token, pkg, id string, props map[string]any) (map[string]any, error) {
-	out, err := r.runWithInput(ctx, token, pkg, "patch", id, props)
+	res, err := r.execute(ctx, runnerops.Op{Verb: runnerops.VerbPatch, Token: token, Package: pkg, ID: id, Properties: props})
 	if err != nil {
 		return nil, err
 	}
-	state, err := lastJSONObject(out)
-	if err != nil {
-		return nil, fmt.Errorf("parsing patch output: %w (output: %s)", err, truncate(out, 2000))
-	}
-	return state, nil
+	return res.State, nil
 }
 
 // Read implements Runner.
 func (r *ExecRunner) Read(ctx context.Context, token, pkg, id string) (map[string]any, error) {
-	out, err := r.run(ctx, doArgs(token, pkg, "read", id, ""))
+	res, err := r.execute(ctx, runnerops.Op{Verb: runnerops.VerbRead, Token: token, Package: pkg, ID: id})
 	if err != nil {
 		return nil, err
 	}
-	state, err := lastJSONObject(out)
-	if err != nil {
-		return nil, fmt.Errorf("parsing read output: %w (output: %s)", err, truncate(out, 2000))
-	}
-	return state, nil
+	return res.State, nil
 }
 
 // Delete implements Runner.
 func (r *ExecRunner) Delete(ctx context.Context, token, pkg, id string) error {
-	_, err := r.run(ctx, doArgs(token, pkg, "delete", id, ""))
+	_, err := r.execute(ctx, runnerops.Op{Verb: runnerops.VerbDelete, Token: token, Package: pkg, ID: id})
 	return err
 }
 
-// FetchSchema implements Runner by running `pulumi package get-schema`.
-func (r *ExecRunner) FetchSchema(ctx context.Context, pkg, _ string) (*PackageSchema, error) {
-	ctx, cancel := context.WithTimeout(ctx, r.timeout())
-	defer cancel()
-	// #nosec G204 -- structured argv, no shell; pkg comes from the validated CR spec.
-	cmd := exec.CommandContext(ctx, r.bin(), "package", "get-schema", pkg)
-	cmd.Dir = os.TempDir()
-	killProcessGroup(cmd)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("pulumi package get-schema %s: %w: %s", pkg, err, truncate(stderr.String(), 2000))
+// FetchSchema implements Runner.
+func (r *ExecRunner) FetchSchema(ctx context.Context, pkg, token string) (*PackageSchema, error) {
+	res, err := r.execute(ctx, runnerops.Op{Verb: runnerops.VerbSchema, Token: token, Package: pkg})
+	if err != nil {
+		return nil, err
 	}
 	var s PackageSchema
-	if err := json.Unmarshal(stdout.Bytes(), &s); err != nil {
-		return nil, fmt.Errorf("parsing schema for %s: %w", pkg, err)
+	if err := json.Unmarshal(res.Schema, &s); err != nil {
+		return nil, err
 	}
 	return &s, nil
 }
 
-func (r *ExecRunner) runWithInput(ctx context.Context, token, pkg, verb, id string, props map[string]any) (string, error) {
-	inputFile := ""
-	if len(props) > 0 {
-		pcl, err := MarshalPCL(props)
-		if err != nil {
-			return "", err
-		}
-		f, err := os.CreateTemp("", "doresource-*.pp")
-		if err != nil {
-			return "", err
-		}
-		defer func() { _ = os.Remove(f.Name()) }()
-		if _, err := f.WriteString(pcl); err != nil {
-			_ = f.Close()
-			return "", err
-		}
-		if err := f.Close(); err != nil {
-			return "", err
-		}
-		inputFile = f.Name()
+// CreateComponent implements Runner.
+func (r *ExecRunner) CreateComponent(ctx context.Context, token, pkg string, props map[string]any) (string, map[string]any, []byte, error) {
+	res, err := r.execute(ctx, runnerops.Op{Verb: runnerops.VerbEngineUp, Token: token, Package: pkg, Properties: props})
+	if err != nil {
+		return "", nil, nil, err
 	}
-	return r.run(ctx, doArgs(token, pkg, verb, id, inputFile))
+	return res.ID, res.Outputs, res.EngineState, nil
 }
 
-func (r *ExecRunner) run(ctx context.Context, args []string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, r.timeout())
-	defer cancel()
-	// #nosec G204 -- structured argv built by doArgs, no shell involved.
-	cmd := exec.CommandContext(ctx, r.bin(), args...)
-	cmd.Dir = os.TempDir()
-	killProcessGroup(cmd)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		combined := strings.TrimSpace(stderr.String() + "\n" + stdout.String())
-		base := fmt.Errorf("pulumi %s: %w: %s", strings.Join(args, " "), err, truncate(combined, 4000))
-		if sentinel := classifyText(providerErrorText(combined, "")); sentinel != nil {
-			return stdout.String(), fmt.Errorf("%w: %w", sentinel, base)
-		}
-		return stdout.String(), base
+// UpdateComponent implements Runner.
+func (r *ExecRunner) UpdateComponent(ctx context.Context, token, pkg string, props map[string]any, engineState []byte) (map[string]any, []byte, error) {
+	state, err := engineStateJSON(engineState)
+	if err != nil {
+		return nil, nil, err
 	}
-	return stdout.String(), nil
+	res, err := r.execute(ctx, runnerops.Op{Verb: runnerops.VerbEngineUp, Token: token, Package: pkg, Properties: props, EngineState: state})
+	if err != nil {
+		return nil, nil, err
+	}
+	return res.Outputs, res.EngineState, nil
 }
 
-// killProcessGroup makes the command run in its own process group and kills
-// the whole group on context cancellation: pulumi spawns provider plugin
-// subprocesses that would otherwise outlive a timeout and keep mutating
-// cloud state after failure was reported.
-func killProcessGroup(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
-		}
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+// DeleteComponent implements Runner.
+func (r *ExecRunner) DeleteComponent(ctx context.Context, token, pkg string, engineState []byte) error {
+	state, err := engineStateJSON(engineState)
+	if err != nil {
+		return err
 	}
-	cmd.WaitDelay = 10 * time.Second
+	_, err = r.execute(ctx, runnerops.Op{Verb: runnerops.VerbEngineDestroy, Token: token, Package: pkg, EngineState: state})
+	return err
 }

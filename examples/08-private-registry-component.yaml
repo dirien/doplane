@@ -1,0 +1,25 @@
+# Level 8 — a COMPONENT resource from the Pulumi Cloud private registry
+# (org ediri). Components can't be driven by stateless `pulumi do`, so the
+# operator orchestrates them through an ephemeral engine and persists the
+# exported checkpoint in status.engineState (etcd stays the state store).
+#
+# The runner resolves `private/ediri/web-app` through the registry API
+# (PULUMI_ACCESS_TOKEN required in the provider-credentials Secret) to its
+# git source, compiles it on first use, and constructs it. The component
+# (source: github.com/dirien/pdo-components) deploys a Deployment and a
+# ClusterIP Service into the cluster referenced by KUBECONFIG_CONTENT —
+# kind-friendly, no cloud account needed.
+#
+# Prerequisites (see examples/README.md):
+#   INCLUDE_PULUMI_TOKEN=1 INCLUDE_KIND_KUBECONFIG=1 ./hack/sync-creds.sh
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoResource
+metadata:
+  name: private-web-app
+spec:
+  type: web-app:index:WebAppComponent
+  package: private/ediri/web-app
+  properties:
+    replicas: 2
+    labels:
+      example: level-8

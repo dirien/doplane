@@ -1,0 +1,125 @@
+# Level 7 — DigitalOcean graph (requires DIGITALOCEAN_TOKEN in the
+# provider-credentials Secret). This creates billable infrastructure: a
+# small Droplet plus no/low-cost support resources. Delete the composite
+# when you are done.
+#
+#   suffix ─┬─> tag ─────┬─> droplet ──> project-assignment
+#           │            └─> firewall
+#           ├─> vpc ─────────┘
+#           └─> project ─────> project-assignment
+#
+# DigitalOcean credentials:
+#   kubectl create secret generic provider-credentials \
+#     --from-literal=DIGITALOCEAN_TOKEN="$DIGITALOCEAN_TOKEN" \
+#     --dry-run=client -o yaml | kubectl apply -f -
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: digitalocean-web-node
+spec:
+  requiredParameters:
+    - env
+    - region
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        lower: true
+        minLower: 3
+        minNumeric: 2
+        numeric: true
+        special: false
+        upper: false
+    - name: tag
+      type: digitalocean:index/tag:Tag
+      package: digitalocean@4.73.0
+      properties:
+        name: ${self.name}-${params.env}-${resources.suffix.outputs.result}
+    - name: vpc
+      type: digitalocean:index/vpc:Vpc
+      package: digitalocean@4.73.0
+      properties:
+        name: ${self.name}-${params.env}-${resources.suffix.outputs.result}
+        region: ${params.region}
+        ipRange: 10.42.0.0/24
+        description: Managed by pulumi-do-operator
+    - name: project
+      type: digitalocean:index/project:Project
+      package: digitalocean@4.73.0
+      properties:
+        name: ${self.name}-${params.env}-${resources.suffix.outputs.result}
+        description: Managed by pulumi-do-operator
+        environment: Development
+        purpose: Web Application
+    - name: droplet
+      type: digitalocean:index/droplet:Droplet
+      package: digitalocean@4.73.0
+      properties:
+        name: ${self.name}-${params.env}-${resources.suffix.outputs.result}
+        region: ${params.region}
+        image: ubuntu-24-04-x64
+        size: s-1vcpu-1gb
+        backups: false
+        monitoring: true
+        tags:
+          - ${resources.tag.outputs.name}
+        vpcUuid: ${resources.vpc.id}
+        userData: |
+          #cloud-config
+          package_update: true
+          packages:
+            - nginx
+          runcmd:
+            - systemctl enable --now nginx
+    - name: firewall
+      type: digitalocean:index/firewall:Firewall
+      package: digitalocean@4.73.0
+      properties:
+        name: ${self.name}-${params.env}-${resources.suffix.outputs.result}
+        tags:
+          - ${resources.tag.outputs.name}
+        inboundRules:
+          - protocol: tcp
+            portRange: "22"
+            sourceAddresses:
+              - 0.0.0.0/0
+              - ::/0
+          - protocol: tcp
+            portRange: "80"
+            sourceAddresses:
+              - 0.0.0.0/0
+              - ::/0
+        outboundRules:
+          - protocol: tcp
+            portRange: "1-65535"
+            destinationAddresses:
+              - 0.0.0.0/0
+              - ::/0
+          - protocol: udp
+            portRange: "1-65535"
+            destinationAddresses:
+              - 0.0.0.0/0
+              - ::/0
+          - protocol: icmp
+            destinationAddresses:
+              - 0.0.0.0/0
+              - ::/0
+    - name: project-assignment
+      type: digitalocean:index/projectResources:ProjectResources
+      package: digitalocean@4.73.0
+      properties:
+        project: ${resources.project.id}
+        resources:
+          - ${resources.droplet.outputs.dropletUrn}
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: do-web-dev
+spec:
+  definition: digitalocean-web-node
+  parameters:
+    env: dev
+    region: nyc3

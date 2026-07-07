@@ -24,8 +24,8 @@ against AWS (see `examples/`):
   re-render all instances immediately — the decided revision/rollout
   machinery (#9) is future work, acceptable at current fleet sizes.
 - Not yet implemented: typed CRDs + Provider CR (#1, #4), replacement
-  engine & protect flags (#7, #8), plugin-cache volume (#10), gRPC runner
-  (#11).
+  engine & protect flags (#7, #8), writable plugin-cache volume (#10), gRPC
+  runner (#11).
 
 ## The twelve decisions
 
@@ -86,11 +86,13 @@ against AWS (see `examples/`):
    all-at-once). Template edits must never implicitly trigger a fleet-wide
    auto-replace sweep (interaction of #7 with 300 instances).
 
-10. **Warm plugin-cache volume** resolves the conflict between
-    runtime-chosen provider versions (#4) and pre-baked runner images: a
-    warmer Job downloads the pinned plugin once into a shared PVC; runner
-    pods mount it read-only. Owed: PVC lifecycle, RWX vs node-affinity
-    choice, download checksum verification, air-gap story.
+10. **Writable plugin-cache volume** resolves the conflict between
+    runtime-chosen provider versions (#4) and pre-baked runner images:
+    runner Jobs mount a shared PVC as `PULUMI_HOME`, install pinned plugins
+    on demand under a per-plugin filesystem lock, and keep the root
+    filesystem read-only. Owed: PVC lifecycle, RWX vs node-affinity choice,
+    stale lock cleanup, download checksum verification, air-gap story. See
+    `docs/PROVIDER_UX_IMPLEMENTATION.md`.
 
 11. **Persistent per-provider runner service (gRPC)** replaces
     Job-per-operation once propagation fan-out matters (a shared VPC with
@@ -110,7 +112,7 @@ against AWS (see `examples/`):
   CR* (new external identity, same object), so the dependent-blocking
   finalizer rule doesn't apply to replacement; ordering safety comes from
   create-before-delete (#8), not from the deletion block.
-- **Runtime provider versions vs baked plugins**: warm cache volume (#10).
+- **Runtime provider versions vs baked plugins**: writable cache volume (#10).
 - **Fan-out vs Job isolation**: gRPC runner service at scale (#11).
 - **Fleet template edits vs auto-cascade**: revisions + rollout (#9).
 
@@ -152,7 +154,7 @@ against AWS (see `examples/`):
    `spec.references`, indexed watches, readiness gating, blocking deletion,
    reverse index — prove propagation semantics without any codegen.
 2. **Provider CR + typed CRD generation** (`forProvider` + `references`
-   shape) + warm plugin-cache volume.
+   shape) + writable plugin-cache volume.
 3. **Replacement engine**: immutability detection, protect flags, curated
    stateful list, create-before-delete, approval flow.
 4. **Composites**: `CompositeDefinition`, expression language, revisions,

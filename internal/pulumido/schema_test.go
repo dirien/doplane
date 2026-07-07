@@ -44,6 +44,18 @@ func (c *countingRunner) Read(context.Context, string, string, string) (map[stri
 func (c *countingRunner) Delete(context.Context, string, string, string) error {
 	return errors.New("not implemented")
 }
+
+func (c *countingRunner) CreateComponent(context.Context, string, string, map[string]any) (string, map[string]any, []byte, error) {
+	return "", nil, nil, errors.New("not implemented")
+}
+
+func (c *countingRunner) UpdateComponent(context.Context, string, string, map[string]any, []byte) (map[string]any, []byte, error) {
+	return nil, nil, errors.New("not implemented")
+}
+
+func (c *countingRunner) DeleteComponent(context.Context, string, string, []byte) error {
+	return errors.New("not implemented")
+}
 func (c *countingRunner) FetchSchema(ctx context.Context, pkg, token string) (*PackageSchema, error) {
 	c.calls.Add(1)
 	if c.release != nil {
@@ -120,31 +132,29 @@ func TestSchemaCacheErrorNotCached(t *testing.T) {
 
 func TestJobNameDeterminism(t *testing.T) {
 	r := &JobRunner{}
-	env := []struct{ name, value string }{}
-	_ = env
 	ctxA := WithOwner(context.Background(), "default/bucket-a")
 	ctxB := WithOwner(context.Background(), "default/bucket-b")
 
-	n1 := r.jobName(ctxA, "create", "script-1", nil)
-	n2 := r.jobName(ctxA, "create", "script-1", nil)
+	n1 := r.jobName(ctxA, "create", `{"verb":"create"}`)
+	n2 := r.jobName(ctxA, "create", `{"verb":"create"}`)
 	if n1 != n2 {
 		t.Errorf("same owner+op must reuse the job name: %q vs %q", n1, n2)
 	}
-	if r.jobName(ctxB, "create", "script-1", nil) == n1 {
+	if r.jobName(ctxB, "create", `{"verb":"create"}`) == n1 {
 		t.Error("different owners must not share job names")
 	}
-	if r.jobName(ctxA, "create", "script-2", nil) == n1 {
-		t.Error("different scripts must not share job names")
+	if r.jobName(ctxA, "create", `{"verb":"create","id":"x"}`) == n1 {
+		t.Error("different ops must not share job names")
 	}
 	// No owner: random names for mutations, deterministic for schema.
 	anon := context.Background()
-	anonCreate1 := r.jobName(anon, "create", "s", nil)
-	anonCreate2 := r.jobName(anon, "create", "s", nil)
+	anonCreate1 := r.jobName(anon, "create", "op")
+	anonCreate2 := r.jobName(anon, "create", "op")
 	if anonCreate1 == anonCreate2 {
 		t.Error("anonymous mutations must get unique names")
 	}
-	schema1 := r.jobName(anon, "schema", "s", nil)
-	schema2 := r.jobName(anon, "schema", "s", nil)
+	schema1 := r.jobName(anon, "schema", "op")
+	schema2 := r.jobName(anon, "schema", "op")
 	if schema1 != schema2 {
 		t.Error("schema fetches are deterministic and shareable")
 	}

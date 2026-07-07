@@ -61,17 +61,25 @@ operation (and every registry schema fetch) is spawned as a dedicated
 **Kubernetes Job** using a separate runner image:
 
 - manager image: distroless, no Pulumi CLI, no cloud credentials;
-- runner image (`Dockerfile.runner`): `pulumi` CLI + pre-installed provider
-  plugins + `jq`, hardened pod (non-root, read-only root filesystem, no
-  capabilities, seccomp `RuntimeDefault`), own resource limits,
+- runner image (`Dockerfile.runner`): the **`pdo-runner`** binary + `pulumi`
+  CLI + language toolchains + pre-installed provider plugins, hardened pod
+  (non-root, read-only root filesystem, no capabilities, no service-account
+  token, seccomp `RuntimeDefault`), own resource limits,
   `activeDeadlineSeconds` and TTL cleanup;
+- each Job runs exactly one typed `pdo-runner` invocation: the operation
+  arrives as one JSON document (`PDO_OP`), the outcome returns as one JSON
+  envelope with a machine-readable failure code — no shell scripts, no log
+  scraping;
+- Jobs get deterministic names derived from the owning object and operation,
+  so interrupted operations are **adopted** on retry instead of re-run;
 - cloud credentials come from the optional `provider-credentials` Secret and
   are mounted **only into runner pods**;
-- schema fetches pipe `pulumi package get-schema` through `jq` so only the
-  requested resource's schema lands in the pod log (the full AWS schema is
-  ~56 MB — beyond kubelet log rotation limits);
-- runner pods run with `PULUMI_BACKEND_URL=file:///tmp`, keeping the CLI
-  fully offline with respect to Pulumi Cloud.
+- schema fetches are trimmed to the single requested resource before they
+  travel through pod logs (the full AWS schema is ~56 MB — beyond kubelet
+  log rotation limits); private-registry schemas come straight from the
+  registry API without compiling anything;
+- operations use an isolated per-op `file://` backend, keeping engine state
+  out of Pulumi Cloud.
 
 For local development (`make run`), the controller falls back to executing
 the local `pulumi` binary (`--runner-mode=exec`).
@@ -85,6 +93,30 @@ provider's JSON schema (`resources[<token>].inputProperties` /
 properties, missing required inputs and primitive type mismatches surface as
 a terminal `Synced=False / ValidationFailed` condition plus a Warning event —
 no runner Job is spawned for invalid specs.
+
+## Components from the Pulumi Cloud private registry
+
+Component resources (marked `isComponent` in their schema) cannot be driven
+by stateless `pulumi do` — the operator orchestrates them through an
+**ephemeral engine** inside the runner Job: a generated one-resource program,
+`pulumi up` against a throwaway `file://` backend, and the exported
+checkpoint persisted in `status.engineState` (etcd stays the state store);
+updates and deletes re-import that checkpoint. `spec.package` accepts
+private-registry references, resolved through the registry API:
+
+```yaml
+spec:
+  type: web-app:index:WebAppComponent
+  package: private/ediri/web-app   # or org/name@version, or a git source
+  properties:
+    replicas: 2
+```
+
+Requires `PULUMI_ACCESS_TOKEN` in the `provider-credentials` Secret (and
+`KUBECONFIG_CONTENT` for components that target Kubernetes) — see
+`hack/sync-creds.sh`. Every operation runs as one typed `pdo-runner`
+invocation in the Job; failures surface as machine-readable condition
+reasons (`RegistryAuthMissing`, `RegistryResolveFailed`, `EngineFailed`, …).
 
 ## Dependencies between resources
 

@@ -17,206 +17,76 @@ limitations under the License.
 package pulumido
 
 import (
-	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
+
+	"github.com/dirien/pulumi-do-operator/internal/runnerops"
 )
 
-func TestMarshalPCL(t *testing.T) {
-	props := map[string]any{
-		"bucket": "my-bucket",
-		"length": json.Number("3"),
-		"force":  true,
-		"tags": map[string]any{
-			"managed-by": "operator",
-			"quote":      `say "hi" ${not-interpolated}`,
-		},
-		"rules": []any{json.Number("1"), "two"},
-		"nada":  nil,
+func TestResultErr(t *testing.T) {
+	if err := resultErr(runnerops.Result{OK: true}); err != nil {
+		t.Fatalf("success must map to nil, got %v", err)
 	}
-	out, err := MarshalPCL(props)
+
+	err := resultErr(runnerops.Result{OK: false, Code: runnerops.CodeNotFound, Message: "gone"})
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("NotFound code must map to ErrNotFound: %v", err)
+	}
+	var coded *CodedError
+	if !errors.As(err, &coded) || coded.Code != runnerops.CodeNotFound {
+		t.Errorf("coded error must be preserved: %v", err)
+	}
+
+	err = resultErr(runnerops.Result{OK: false, Code: runnerops.CodeReadNotSupported, Message: "no import"})
+	if !errors.Is(err, ErrReadNotSupported) {
+		t.Errorf("ReadNotSupported code must map to sentinel: %v", err)
+	}
+
+	err = resultErr(runnerops.Result{OK: false, Code: runnerops.CodeRegistryAuthMissing, Message: "set the token"})
+	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrReadNotSupported) {
+		t.Errorf("other codes must not map to sentinels: %v", err)
+	}
+	if !errors.As(err, &coded) || coded.Code != runnerops.CodeRegistryAuthMissing {
+		t.Errorf("coded error expected: %v", err)
+	}
+}
+
+func TestDecodeEnvelope(t *testing.T) {
+	out := "Downloading provider\nsome progress\n" +
+		`{"ok":true,"id":"urn:pulumi:dev::pdo::t::res","outputs":{"dns":"svc:8080"},"engineState":{"version":3}}` + "\n"
+	res, err := decodeEnvelope(out)
 	if err != nil {
-		t.Fatalf("MarshalPCL: %v", err)
+		t.Fatal(err)
 	}
-	for _, want := range []string{
-		`bucket = "my-bucket"`,
-		"length = 3",
-		"force = true",
-		`"managed-by" = "operator"`,
-		`"quote" = "say \"hi\" $${not-interpolated}"`,
-		`rules = [1, "two"]`,
-		"nada = null",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("output missing %q:\n%s", want, out)
-		}
+	if !res.OK || res.ID != "urn:pulumi:dev::pdo::t::res" || res.Outputs["dns"] != "svc:8080" {
+		t.Errorf("envelope: %+v", res)
+	}
+
+	if _, err := decodeEnvelope(`{"id":"not-an-envelope"}`); err == nil {
+		t.Error("non-envelope JSON must be rejected")
+	}
+	if _, err := decodeEnvelope("no json at all"); err == nil {
+		t.Error("missing envelope must error")
 	}
 }
 
-func TestMarshalPCLRejectsBadIdentifier(t *testing.T) {
-	if _, err := MarshalPCL(map[string]any{"not valid": 1}); err == nil {
-		t.Fatal("expected error for invalid identifier")
+func TestClassifyInfraFailure(t *testing.T) {
+	if err := classifyInfraFailure("error: api error NoSuchBucket: does not exist", ""); !errors.Is(err, ErrNotFound) {
+		t.Errorf("want ErrNotFound, got %v", err)
+	}
+	if err := classifyInfraFailure("This will delete \"my-404-bucket\"", ""); err != nil {
+		t.Errorf("command echoes must not classify: %v", err)
+	}
+	if err := classifyInfraFailure("", "error: Resource Import Not Implemented"); !errors.Is(err, ErrReadNotSupported) {
+		t.Errorf("fail message classification: %v", err)
 	}
 }
 
-func TestLastJSONObject(t *testing.T) {
-	out := `This will create random:index/randomPet:RandomPet with the following inputs:
-{
-  "length": 3
-}
-{
-  "id": "quick-fox",
-  "length": 3,
-  "separator": "-"
-}
-`
-	obj, err := lastJSONObject(out)
-	if err != nil {
-		t.Fatalf("lastJSONObject: %v", err)
+func TestEngineStateJSON(t *testing.T) {
+	if got, err := engineStateJSON(nil); err != nil || got != nil {
+		t.Errorf("empty state: %v %v", got, err)
 	}
-	if obj["id"] != "quick-fox" {
-		t.Errorf("wanted last object with id, got %v", obj)
-	}
-}
-
-func TestLastJSONObjectNoJSON(t *testing.T) {
-	if _, err := lastJSONObject("nothing to see here"); err == nil {
-		t.Fatal("expected error when no JSON present")
-	}
-}
-
-func TestClassifyProviderErrors(t *testing.T) {
-	cases := []struct {
-		name   string
-		output string
-		extra  string
-		want   error
-	}{
-		{
-			name:   "read not supported",
-			output: "error: Resource Import Not Implemented: contact developer",
-			want:   ErrReadNotSupported,
-		},
-		{
-			name:   "aws not found",
-			output: "some preamble\nerror: api error NoSuchBucket: The specified bucket does not exist",
-			want:   ErrNotFound,
-		},
-		{
-			name:  "job fail message only",
-			extra: "error: resource \"x\" was not found",
-			want:  ErrNotFound,
-		},
-		{
-			name:   "status code 404",
-			output: "error: https response error StatusCode: 404, request id: abc",
-			want:   ErrNotFound,
-		},
-		{
-			name:   "access denied is not a sentinel",
-			output: "error: AccessDenied: not authorized",
-			want:   nil,
-		},
-		{
-			// A resource whose ID contains "not-found" must not be
-			// classified from the echoed command line.
-			name:   "id in command line is ignored",
-			output: "This will delete aws:s3/bucketV2:BucketV2 \"my-not-found-bucket\".\npulumi do delete my-404-bucket",
-			want:   nil,
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := classifyText(providerErrorText(c.output, c.extra))
-			matches := (got == nil && c.want == nil) || errors.Is(got, c.want)
-			if !matches {
-				t.Errorf("want %v, got %v", c.want, got)
-			}
-		})
-	}
-}
-
-func TestValidate(t *testing.T) {
-	schema := &PackageSchema{
-		Name:    "aws",
-		Version: "7.34.0",
-		Resources: map[string]ResourceSchema{
-			"aws:s3/bucketV2:BucketV2": {
-				RequiredInputs: []string{},
-				InputProperties: map[string]PropertySchema{
-					"bucket": {Type: "string"},
-					"tags":   {Type: "object", AdditionalProperties: &PropertySchema{Type: "string"}},
-					"count":  {Type: "integer"},
-					"rules":  {Type: "array", Items: &PropertySchema{Type: "string"}},
-					"refd":   {Ref: "#/types/aws:s3/thing:Thing"},
-				},
-			},
-			"aws:ec2/instance:Instance": {
-				RequiredInputs:  []string{"ami"},
-				InputProperties: map[string]PropertySchema{"ami": {Type: "string"}},
-			},
-		},
-	}
-
-	t.Run("valid", func(t *testing.T) {
-		v, err := schema.Validate("aws:s3/bucketV2:BucketV2", map[string]any{
-			"bucket": "b",
-			"tags":   map[string]any{"a": "b"},
-			"count":  json.Number("2"),
-			"rules":  []any{"r1"},
-			"refd":   map[string]any{"whatever": true},
-		})
-		if err != nil || len(v) != 0 {
-			t.Fatalf("want valid, got violations=%v err=%v", v, err)
-		}
-	})
-
-	t.Run("violations", func(t *testing.T) {
-		v, err := schema.Validate("aws:s3/bucketV2:BucketV2", map[string]any{
-			"bucket":  json.Number("5"),
-			"unknown": "x",
-			"tags":    map[string]any{"a": json.Number("1")},
-			"rules":   []any{json.Number("1")},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(v) != 4 {
-			t.Fatalf("want 4 violations, got %d: %v", len(v), v)
-		}
-	})
-
-	t.Run("required", func(t *testing.T) {
-		v, err := schema.Validate("aws:ec2/instance:Instance", map[string]any{})
-		if err != nil || len(v) != 1 || !strings.Contains(v[0], "ami") {
-			t.Fatalf("want missing-ami violation, got %v err=%v", v, err)
-		}
-	})
-
-	t.Run("unknown type", func(t *testing.T) {
-		if _, err := schema.Validate("aws:nope/nope:Nope", nil); err == nil {
-			t.Fatal("expected error for unknown resource type")
-		}
-	})
-}
-
-func TestDoArgs(t *testing.T) {
-	got := strings.Join(doArgs("aws:s3/bucketV2:BucketV2", "aws@7.34.0", "patch", "my-id", "/tmp/in.pp"), " ")
-	want := "do aws:s3/bucketV2:BucketV2 --package aws@7.34.0 patch my-id --yes --input-file /tmp/in.pp --stateless --non-interactive --color never"
-	if got != want {
-		t.Errorf("doArgs mismatch:\n got %s\nwant %s", got, want)
-	}
-	read := strings.Join(doArgs("t:m:R", "", "read", "id1", ""), " ")
-	if strings.Contains(read, "--yes") {
-		t.Errorf("read must not include --yes: %s", read)
-	}
-}
-
-func TestShellQuote(t *testing.T) {
-	in := `a'b"$c`
-	q := shellQuote(in)
-	if q != `'a'\''b"$c'` {
-		t.Errorf("shellQuote(%q) = %s", in, q)
+	if _, err := engineStateJSON(make([]byte, runnerops.MaxEngineStateBytes+1)); err == nil {
+		t.Error("oversized state must be rejected")
 	}
 }

@@ -29,6 +29,9 @@ spec:
     - jsonPath: .status.conditions[?(@.type=='Synced')].status
       name: SYNCED
       type: string
+    - jsonPath: .status.conditions[?(@.type=='Synced')].reason
+      name: REASON
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: AGE
       type: date
@@ -212,6 +215,13 @@ spec:
                   - type
                   type: object
                 type: array
+              engineState:
+                description: |-
+                  EngineState holds the exported Pulumi engine checkpoint for component
+                  resources (which are orchestrated by an ephemeral engine instead of
+                  stateless CRUD). Persisted in etcd with the rest of this object and
+                  re-imported on update/delete.
+                x-kubernetes-preserve-unknown-fields: true
               id:
                 description: ID is the provider-assigned identifier of the external
                   resource.

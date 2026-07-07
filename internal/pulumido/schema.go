@@ -21,8 +21,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strings"
 	"sync"
+
+	"github.com/dirien/pulumi-do-operator/internal/runnerops"
 )
 
 // PropertySchema is the subset of a Pulumi schema property definition needed
@@ -39,6 +40,9 @@ type PropertySchema struct {
 type ResourceSchema struct {
 	InputProperties map[string]PropertySchema `json:"inputProperties"`
 	RequiredInputs  []string                  `json:"requiredInputs"`
+	// IsComponent marks component resources: they are orchestrated through
+	// an ephemeral engine (Construct) rather than stateless CRUD.
+	IsComponent bool `json:"isComponent"`
 }
 
 // PackageSchema is the subset of a provider's registry schema we consume.
@@ -79,10 +83,7 @@ func NewSchemaCache(runner Runner) *SchemaCache {
 // PackageForToken derives the package name from a type token like
 // "aws:s3/bucketV2:BucketV2".
 func PackageForToken(token string) string {
-	if i := strings.Index(token, ":"); i > 0 {
-		return token[:i]
-	}
-	return token
+	return runnerops.PackageForToken(token)
 }
 
 // Get returns a schema for pkg ("name" or "name@version") that covers token.
