@@ -140,13 +140,16 @@ against AWS (see `examples/`):
 - **CRD regeneration safety**: in-place schema updates on provider upgrade
   can invalidate stored objects; needs served/storage version policy and
   possibly conversion webhooks.
-- **Connection secrets**: outputs containing credentials should optionally
-  land in Secrets (`writeConnectionSecretToRef`-style), not in
-  world-readable status.
+- ~~**Connection secrets**~~ *(done)*: `spec.writeConnectionSecretToRef` +
+  `spec.connectionDetails` publish selected outputs into a same-namespace,
+  owner-referenced Secret.
 - **Read-path credentials for the runner service**: a warm read service
   ideally uses read-only cloud credentials, distinct from mutate creds.
-- **Secret inputs**: `spec.forProvider` values sourced from Secrets (not
-  just other resources' outputs).
+- ~~**Secret inputs**~~ *(done)*: `spec.valuesFrom` injects Secret values
+  via kubelet env into runner pods; placeholder + mapping only in the
+  object/op, redaction on all output channels, rotation via
+  resourceVersion-mixed applied hash. Components excluded (checkpoint
+  would persist values).
 
 ## Suggested build order (risk-first)
 

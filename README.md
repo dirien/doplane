@@ -174,6 +174,14 @@ from the profile, a conflicting `spec.package` is rejected
 (`ProviderPackageMismatch`), and tokens outside `allowedResources` fail with
 `ResourceNotAllowed`.
 
+**Tenant-owned profiles**: the namespaced `DoProviderConfig` is the twin of
+the cluster-scoped `DoProvider` — same spec, but its credentials Secret is
+checked in the config's own namespace, so teams pin versions and rotate
+credentials without platform involvement. Resources select it with
+`providerRef: {name: x, kind: DoProviderConfig}` (resolved in the
+resource's namespace). Per-tenant credential isolation at runtime requires
+`runner.namespaceMode: resource`.
+
 ### Writable plugin cache
 
 With `pluginCache.enabled=true` (Helm) or the
@@ -189,6 +197,38 @@ paths for `spec.references`, example YAML:
 
 ```sh
 ./hack/provider-help.sh digitalocean@4.73.0 digitalocean:index/droplet:Droplet
+```
+
+## Secrets in and out
+
+**Secret inputs** (`spec.valuesFrom`) inject Secret values into properties
+without the value ever being stored anywhere visible: only a placeholder
+and a path→env-var mapping travel through the controller, the object and
+the Job spec; the kubelet injects the value into the runner pod (from the
+Secret in the Job's namespace), the runner substitutes it just before the
+provider call, and every output channel — streamed logs, error messages,
+recorded state — is redacted. Rotating the Secret re-patches the resource
+(its resourceVersion is folded into the applied hash). Not supported for
+component resources, whose engine checkpoint would persist the value.
+
+**Connection secrets** (`spec.writeConnectionSecretToRef` +
+`spec.connectionDetails`) publish selected outputs and static values into a
+same-namespace Secret owned by the resource (garbage-collected with it):
+
+```yaml
+spec:
+  writeConnectionSecretToRef:
+    name: db-conn
+  connectionDetails:
+    - name: endpoint
+      fromFieldPath: status.outputs.endpoint
+    - name: username
+      value: app
+  valuesFrom:
+    - toPath: password
+      secretKeyRef:
+        name: db-auth
+        key: password
 ```
 
 ## Multitenancy
@@ -284,13 +324,14 @@ make run      # run the manager locally in exec mode (uses your pulumi login/env
   (AlreadyExists), for server-named resources it can leak one resource.
   Pre-create external-name bookkeeping would close this — a good future
   improvement.
-- `spec.properties` are treated as non-secret; support for resolving values
-  from Secrets would be the next step toward production use.
+- Secret property values belong in `spec.valuesFrom`, not `spec.properties`
+  (which is stored verbatim in etcd and echoed by the CLI).
 - `status.outputs` stores what `pulumi do` prints. Secret-flagged outputs
-  are masked by the CLI (the operator never passes `--show-secrets`), but
-  treat status as sensitive-adjacent: anything a provider returns unflagged
-  lands in etcd verbatim. Connection-secret support
-  (`writeConnectionSecretToRef`-style) is future work.
+  are masked by the CLI (the operator never passes `--show-secrets`), and
+  `valuesFrom` values are redacted from state and logs — but treat status
+  as sensitive-adjacent: anything else a provider returns unflagged lands
+  in etcd verbatim. Use `writeConnectionSecretToRef` to publish selected
+  outputs into a Secret instead of reading them from status.
 
 ## License
 
