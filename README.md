@@ -144,6 +144,100 @@ expressions compile into references so the graph engine handles ordering.
 See `examples/` for a walkthrough from a single resource to a
 cross-provider composite DAG.
 
+## Provider onboarding
+
+Platform teams declare a provider once with a cluster-scoped `DoProvider`;
+app teams reference it instead of memorizing plugin versions and credential
+names (see `docs/PROVIDER_UX_IMPLEMENTATION.md` for the full design):
+
+```yaml
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoProvider
+metadata:
+  name: digitalocean
+spec:
+  package: digitalocean@4.73.0
+  credentialsSecretRef:
+    name: provider-credentials
+  credentialKeys:
+    - DIGITALOCEAN_TOKEN
+  allowedResources:
+    - index/droplet
+    - index/vpc
+```
+
+The controller validates the profile (schema fetch, plugin availability,
+Secret + keys) into `Ready`/`SchemaFetched`/`PluginReady`/`CredentialsReady`
+conditions. A `DoResource` (or composite child) then uses
+`spec.providerRef: {name: digitalocean}` — package and credentials resolve
+from the profile, a conflicting `spec.package` is rejected
+(`ProviderPackageMismatch`), and tokens outside `allowedResources` fail with
+`ResourceNotAllowed`.
+
+### Writable plugin cache
+
+With `pluginCache.enabled=true` (Helm) or the
+`deploy/kustomize/plugin-cache` overlay, runner Jobs mount a shared PVC:
+pinned plugins install there once — under a per-plugin lock, at most one
+download cluster-wide — and every later operation reuses them. New providers
+become a YAML change instead of a runner image rebuild; baked plugins remain
+a cold-start optimization. Unpinned packages (no `@version`) keep on-demand
+resolution and surface a `ProviderNotPinned` warning event.
+
+Generated help for any resource type — required/optional inputs, output
+paths for `spec.references`, example YAML:
+
+```sh
+./hack/provider-help.sh digitalocean@4.73.0 digitalocean:index/droplet:Droplet
+```
+
+## Multitenancy
+
+Two independent knobs pick the tenancy shape; both default to the simple
+cluster-wide setup:
+
+- **Watch scope** — `--watch-namespaces` (env `WATCH_NAMESPACES`,
+  Helm `watchNamespaces`): empty reconciles the whole cluster; a
+  comma-separated list scopes the operator to those namespaces. In the
+  scoped shape the Helm chart replaces the manager ClusterRole with a Role
+  per watched namespace (plus a minimal ClusterRole for the cluster-scoped
+  `DoCompositeDefinition`).
+- **Runner namespace mode** — `--runner-namespace-mode` (env
+  `RUNNER_NAMESPACE_MODE`, Helm `runner.namespaceMode`):
+  - `operator` (default): every runner Job executes in the operator's
+    namespace using its shared `provider-credentials` Secret — one set of
+    cloud credentials for the whole cluster.
+  - `resource`: each runner Job executes in the owning DoResource's
+    namespace and picks up the `provider-credentials` Secret **of that
+    namespace** — per-tenant cloud credentials, with the namespace as the
+    isolation boundary. Namespaces without the Secret still work for
+    credential-free providers (the Secret reference is optional).
+
+    When a tenant **namespace is deleted**, Kubernetes stops accepting new
+    Jobs there while DoResource finalizers still have external resources to
+    tear down. Delete operations then fall back to the operator's namespace
+    and its `provider-credentials` Secret, so namespace deletion cannot
+    wedge on a terminating namespace. In `resource` mode, keep credentials
+    in the operator namespace that are able to delete tenant resources
+    (they are used only for this cleanup path).
+
+References (`spec.references`) always resolve within the resource's own
+namespace, so tenants cannot read each other's outputs. Registry schemas
+are cached per package across all tenants — schema metadata (not
+credentials) is shared; actual registry/cloud operations always run with
+the Job's own credentials.
+
+```sh
+# cluster-wide operator, per-namespace tenant credentials
+helm install doplane deploy/doplane -n doplane-system \
+  --set runner.namespaceMode=resource
+
+# operator scoped to two team namespaces
+helm install doplane deploy/doplane -n doplane-system \
+  --set 'watchNamespaces={team-a,team-b}' \
+  --set runner.namespaceMode=resource
+```
+
 ## Getting started (kind)
 
 ```sh

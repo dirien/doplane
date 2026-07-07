@@ -1,0 +1,49 @@
+# Level 10 — the full provider-UX stack: a DoProvider profile plus a
+# cataloged composite that hides tokens, versions and wiring from app teams.
+# No cloud credentials needed.
+#
+# Platform team: provider profile (once per cluster) ...
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoProvider
+metadata:
+  name: random-catalog
+spec:
+  package: random@4.21.0
+---
+# ... and the approved workflow. Children pin their provider through
+# providerRef; app teams never see a type token or package version.
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: pet-identity
+spec:
+  requiredParameters:
+    - team
+  resources:
+    - name: pet
+      type: random:index/randomPet:RandomPet
+      providerRef:
+        name: random-catalog
+      properties:
+        length: 2
+        prefix: ${params.team}
+    - name: suffix
+      type: random:index/randomString:RandomString
+      providerRef:
+        name: random-catalog
+      properties:
+        length: 6
+        special: false
+        upper: false
+        keepers:
+          pet: ${resources.pet.id}
+---
+# App team: one object with safe parameters only.
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: payments-identity
+spec:
+  definition: pet-identity
+  parameters:
+    team: payments

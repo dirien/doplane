@@ -16,6 +16,15 @@ the registry token and a kubeconfig for the runner:
 | 6 | `06-reference-fan-in.yaml` | no-cloud fan-in graph: object paths, array paths and downstream propagation |
 | 7 | `07-digitalocean-web-node.yaml` | DigitalOcean composite: VPC, tag, Droplet, firewall, project assignment |
 | 8 | `08-private-registry-component.yaml` | COMPONENT from the Pulumi Cloud private registry (`private/ediri/web-app`), orchestrated by an ephemeral engine; checkpoint persisted in `status.engineState` |
+| 9 | `09-provider-profile.yaml` | `DoProvider` profile: platform-pinned package, allow-list enforcement, `providerRef` on raw resources — no cloud account needed |
+| 10 | `10-cataloged-composite.yaml` | the full provider UX: profile + cataloged composite hiding tokens, versions and wiring from app teams — no cloud account needed |
+
+Generated help for any resource type (required/optional inputs, reference
+paths, example YAML):
+
+```sh
+./hack/provider-help.sh random@4.21.0 random:index/randomPet:RandomPet
+```
 
 ## Walkthrough
 
@@ -60,4 +69,14 @@ kubectl create secret generic provider-credentials \
 kubectl apply -f examples/07-digitalocean-web-node.yaml
 kubectl get docomposite do-web-dev -w        # do-web-dev 7/7 READY
 kubectl delete docomposite do-web-dev        # delete when done to stop charges
+
+# Provider profiles: package pinned once, resources reference the profile.
+kubectl apply -f examples/09-provider-profile.yaml
+kubectl get doproviders                      # random READY True
+kubectl get dores pet-via-provider -w        # created with the profile's package
+kubectl get dores integer-not-allowed        # SYNCED False / ResourceNotAllowed
+
+# Cataloged composite: app teams see parameters only.
+kubectl apply -f examples/10-cataloged-composite.yaml
+kubectl get docomposite payments-identity -w # 2/2 READY
 ```

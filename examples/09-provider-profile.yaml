@@ -1,0 +1,45 @@
+# Level 9 — DoProvider: platform teams declare a provider once; app teams
+# reference it instead of memorizing package versions and credential names.
+# No cloud credentials needed (the random provider is credential-free).
+#
+# The cluster-scoped profile pins the package version, optionally names the
+# credentials Secret runner Jobs load, and restricts which resource types
+# may use it:
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoProvider
+metadata:
+  name: random
+spec:
+  package: random@4.21.0
+  allowedResources:
+    - index/randomPet
+    - index/randomString
+---
+# Resources reference the profile instead of pinning a package themselves.
+# spec.package stays allowed for backward compatibility, but must then match
+# the provider's pin (mismatch → Synced=False / ProviderPackageMismatch).
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoResource
+metadata:
+  name: pet-via-provider
+spec:
+  type: random:index/randomPet:RandomPet
+  providerRef:
+    name: random
+  properties:
+    length: 2
+    prefix: level9
+---
+# This one is rejected: randomInteger is not in allowedResources
+# (Synced=False / ResourceNotAllowed).
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoResource
+metadata:
+  name: integer-not-allowed
+spec:
+  type: random:index/randomInteger:RandomInteger
+  providerRef:
+    name: random
+  properties:
+    min: 1
+    max: 10

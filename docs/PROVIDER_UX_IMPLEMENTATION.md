@@ -5,6 +5,27 @@ engineering teams. The goal is simple: platform engineers add a provider once;
 application teams consume curated composites without learning Pulumi provider
 tokens, plugin versions or credential names.
 
+## Implementation status (2026-07-08)
+
+All five phases are implemented, with these deviations:
+
+- **Plugin install runs in Go** (`internal/runnerops/plugincache.go`), not
+  shell: the typed runner performs the locked install before the operation,
+  and the operation's per-op `PULUMI_HOME` seeds from the cache read-only —
+  so operations structurally cannot write credentials or state onto the
+  cache volume. Lock semantics are as designed (atomic mkdir, stale after
+  the Job deadline).
+- **`spec.pluginCache` on DoProvider is omitted**: the cache is a
+  deployment-level knob (`pluginCache.*` Helm values /
+  `deploy/kustomize/plugin-cache` overlay); a per-provider mode had no
+  consumer. CRD surface is easy to add later, hard to remove.
+- **Credentials Secrets are checked in the runner namespace** (DoProvider is
+  cluster-scoped; in per-resource-namespace runner mode tenant Secrets are
+  resolved at operation time instead and cannot be pre-validated).
+- **Runner Jobs outside the operator namespace skip the cache mount** — PVC
+  references are namespace-local.
+- Phase 5 is the developer script `hack/provider-help.sh`.
+
 ## Target UX
 
 Platform teams should be able to declare provider support with one object:
