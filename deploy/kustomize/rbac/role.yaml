@@ -23,9 +23,16 @@ rules:
   - ""
   resources:
   - pods/log
-  - secrets
   verbs:
   - get
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+  - get
+  - update
 - apiGroups:
   - batch
   resources:
@@ -40,6 +47,7 @@ rules:
   - do.pulumi.com
   resources:
   - docompositedefinitions
+  - doproviderconfigs
   - doproviders
   verbs:
   - get
@@ -50,6 +58,7 @@ rules:
   resources:
   - docompositedefinitions/status
   - docomposites/status
+  - doproviderconfigs/status
   - doproviders/status
   - doresources/status
   verbs:

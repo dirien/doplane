@@ -125,6 +125,8 @@ ClusterRole (cluster-wide install) or into a Role per watched namespace
     - secrets
   verbs:
     - get
+    - create
+    - update
 - apiGroups:
     - batch
   resources:
@@ -139,11 +141,20 @@ ClusterRole (cluster-wide install) or into a Role per watched namespace
     - do.pulumi.com
   resources:
     - docomposites/status
+    - doproviderconfigs/status
     - doresources/status
   verbs:
     - get
     - patch
     - update
+- apiGroups:
+    - do.pulumi.com
+  resources:
+    - doproviderconfigs
+  verbs:
+    - get
+    - list
+    - watch
 - apiGroups:
     - do.pulumi.com
   resources:
