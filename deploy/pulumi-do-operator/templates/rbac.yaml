@@ -1,0 +1,274 @@
+{{- if .Values.rbac.create }}
+{{- $fullname := include "pulumi-do-operator.fullname" . -}}
+{{- $managerRoleName := printf "%s-manager-role" $fullname | trunc 63 | trimSuffix "-" -}}
+{{- $managerRoleBindingName := printf "%s-manager-rolebinding" $fullname | trunc 63 | trimSuffix "-" -}}
+{{- $leaderElectionRoleName := printf "%s-leader-election-role" $fullname | trunc 63 | trimSuffix "-" -}}
+{{- $leaderElectionRoleBindingName := printf "%s-leader-election-rolebinding" $fullname | trunc 63 | trimSuffix "-" -}}
+{{- $metricsAuthRoleName := printf "%s-metrics-auth-role" $fullname | trunc 63 | trimSuffix "-" -}}
+{{- $metricsAuthRoleBindingName := printf "%s-metrics-auth-rolebinding" $fullname | trunc 63 | trimSuffix "-" -}}
+{{- $metricsReaderName := printf "%s-metrics-reader" $fullname | trunc 63 | trimSuffix "-" -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $managerRoleName }}
+  labels:
+    {{- include "pulumi-do-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - pods/log
+    verbs:
+      - get
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - do.pulumi.com
+    resources:
+      - docompositedefinitions
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - do.pulumi.com
+    resources:
+      - docompositedefinitions/status
+      - docomposites/status
+      - doresources/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
+      - do.pulumi.com
+    resources:
+      - docomposites
+      - doresources
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - do.pulumi.com
+    resources:
+      - docomposites/finalizers
+      - doresources/finalizers
+    verbs:
+      - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $managerRoleBindingName }}
+  labels:
+    {{- include "pulumi-do-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $managerRoleName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "pulumi-do-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $leaderElectionRoleName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pulumi-do-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $leaderElectionRoleBindingName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pulumi-do-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $leaderElectionRoleName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "pulumi-do-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $metricsAuthRoleName }}
+  labels:
+    {{- include "pulumi-do-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - authentication.k8s.io
+    resources:
+      - tokenreviews
+    verbs:
+      - create
+  - apiGroups:
+      - authorization.k8s.io
+    resources:
+      - subjectaccessreviews
+    verbs:
+      - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $metricsAuthRoleBindingName }}
+  labels:
+    {{- include "pulumi-do-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $metricsAuthRoleName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "pulumi-do-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $metricsReaderName }}
+  labels:
+    {{- include "pulumi-do-operator.labels" . | nindent 4 }}
+rules:
+  - nonResourceURLs:
+      - /metrics
+    verbs:
+      - get
+{{- if .Values.rbac.aggregateRoles }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ printf "%s-doresource-admin-role" $fullname | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "pulumi-do-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - do.pulumi.com
+    resources:
+      - doresources
+    verbs:
+      - '*'
+  - apiGroups:
+      - do.pulumi.com
+    resources:
+      - doresources/status
+    verbs:
+      - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ printf "%s-doresource-editor-role" $fullname | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "pulumi-do-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - do.pulumi.com
+    resources:
+      - doresources
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - do.pulumi.com
+    resources:
+      - doresources/status
+    verbs:
+      - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ printf "%s-doresource-viewer-role" $fullname | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "pulumi-do-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - do.pulumi.com
+    resources:
+      - doresources
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - do.pulumi.com
+    resources:
+      - doresources/status
+    verbs:
+      - get
+{{- end }}
+{{- end }}

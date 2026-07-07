@@ -1,0 +1,13 @@
+# Level 1 — a single resource, no cloud credentials needed.
+# The operator runs `pulumi do create` for the random provider and stores
+# the result in status (etcd).
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoResource
+metadata:
+  name: pet-simple
+spec:
+  type: random:index/randomPet:RandomPet
+  package: random@4.21.0
+  properties:
+    length: 2
+    prefix: level1

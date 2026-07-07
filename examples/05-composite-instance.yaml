@@ -1,0 +1,15 @@
+# Level 5 — an app team instantiates the platform's composite. One object
+# in, four cloud resources out — and every one of them is also visible as
+# its own DoResource:
+#
+#   kubectl get docomposites            # the composition roll-up
+#   kubectl get doresources             # each underlying Pulumi resource
+#   kubectl describe dores team-data-bucket
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: team-data
+spec:
+  definition: secure-bucket
+  parameters:
+    env: prod

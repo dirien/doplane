@@ -1,0 +1,102 @@
+# -- Number of manager replicas.
+replicaCount: 1
+
+image:
+  # -- Full manager image reference. When set, repository/tag/digest are ignored.
+  fullName: ""
+  # -- Manager image repository.
+  repository: controller
+  # -- Manager image tag.
+  tag: latest
+  # -- Manager image digest. Takes precedence over tag when set.
+  digest: ""
+  # -- Manager image pull policy.
+  pullPolicy: IfNotPresent
+
+runnerImage:
+  # -- Full runner image reference passed to RUNNER_IMAGE. When set, repository/tag/digest are ignored.
+  fullName: ""
+  # -- Runner image repository.
+  repository: pulumi-do-runner
+  # -- Runner image tag.
+  tag: dev
+  # -- Runner image digest. Takes precedence over tag when set.
+  digest: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # -- Specifies whether a ServiceAccount should be created.
+  create: true
+  # -- The name of the ServiceAccount to use.
+  name: ""
+  annotations: {}
+
+rbac:
+  # -- Specifies whether RBAC resources should be created.
+  create: true
+  # -- Create user-facing admin/editor/viewer ClusterRoles for Do resources.
+  aggregateRoles: true
+
+manager:
+  command:
+    - /manager
+  args:
+    - --metrics-bind-address=:8443
+    - --leader-elect
+    - --health-probe-bind-address=:8081
+  podAnnotations:
+    kubectl.kubernetes.io/default-container: manager
+  podLabels: {}
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
+
+metrics:
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 8443
+    targetPort: 8443
+    annotations: {}
+  serviceMonitor:
+    enabled: false
+    labels: {}
+    annotations: {}
+    interval: ""
+    scrapeTimeout: ""
+    path: /metrics
+    scheme: https
+    insecureSkipVerify: true
+    bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    metricRelabelings: []
+    relabelings: []
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+priorityClassName: ""
+terminationGracePeriodSeconds: 10

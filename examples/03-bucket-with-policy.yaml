@@ -1,0 +1,35 @@
+# Level 3 — real cloud resources with a dependency (needs AWS credentials
+# in the provider-credentials Secret, see hack/sync-creds.sh).
+# The bucket policy references the bucket's name and ARN; the ARN is
+# spliced into the policy document with a template. The policy waits for
+# the bucket, and the bucket refuses to delete while the policy exists.
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoResource
+metadata:
+  name: demo-bucket
+spec:
+  type: aws:s3/bucketV2:BucketV2
+  package: aws@7.34.0
+  properties:
+    bucket: pulumi-do-operator-level3
+    tags:
+      managed-by: pulumi-do-operator
+      level: "3"
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoResource
+metadata:
+  name: demo-bucket-policy
+spec:
+  type: aws:s3/bucketPolicy:BucketPolicy
+  package: aws@7.34.0
+  references:
+    - toPath: bucket
+      from:
+        name: demo-bucket
+        fieldPath: status.outputs.bucket
+    - toPath: policy
+      from:
+        name: demo-bucket
+        fieldPath: status.outputs.arn
+      template: '{"Version":"2012-10-17","Statement":[{"Sid":"DenyInsecureTransport","Effect":"Deny","Principal":"*","Action":"s3:*","Resource":["${value}","${value}/*"],"Condition":{"Bool":{"aws:SecureTransport":"false"}}}]}'

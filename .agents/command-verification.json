@@ -1,0 +1,31 @@
+{
+  "verified_at": "2026-07-07T15:05:26Z",
+  "smoke_tested": false,
+  "commands": {
+    "`go test -race -count=1 ./internal/pulumido/`": {"exists": false},
+    "`make helm-lint` / `make helm-template`": {"exists": false},
+    "make manifests": {"exists": true},
+    "`go test -race ./internal/controller/ -run TestName`": {"exists": false},
+    "make test": {"exists": true},
+    "`make install deploy IMG=... RUNNER_IMG=...`": {"exists": false},
+    "make docker-build docker-build-runner IMG=pulumi-do-operator:dev RUNNER_IMG=pulumi-do-runner:dev": {"exists": true},
+    "make helm-template": {"exists": true},
+    "`make docker-build docker-build-runner IMG=pulumi-do-operator:dev RUNNER_IMG=pulumi-do-runner:dev`": {"exists": false},
+    "`make manifests generate`": {"exists": false},
+    "make manifests generate": {"exists": true},
+    "go build ./...": {"exists": true},
+    "make lint": {"exists": true},
+    "make fmt": {"exists": true},
+    "`make test-e2e`": {"exists": false},
+    "go test -race ./internal/controller/ -run TestName": {"exists": true},
+    "`go build ./...`": {"exists": false},
+    "make install deploy IMG=... RUNNER_IMG=...": {"exists": true},
+    "make helm-lint": {"exists": true},
+    "`make fmt`": {"exists": false},
+    "`make lint`": {"exists": false},
+    "make help": {"exists": true},
+    "`make test`": {"exists": false},
+    "make test-e2e": {"exists": true},
+    "go test -race -count=1 ./internal/pulumido/": {"exists": true}
+  }
+}

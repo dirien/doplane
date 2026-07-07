@@ -1,0 +1,47 @@
+# Level 4 — a platform-team-owned composite definition: a "secure bucket"
+# is a 4-resource DAG spanning two providers:
+#
+#   suffix (random) ──> bucket ──> public-access-block
+#                            └───> policy
+#
+# Sibling expressions (${resources.*}) compile into DoResource references,
+# so ordering, readiness gating, value propagation and reverse-order
+# teardown all come from the resource graph engine. Every rendered child is
+# a normal Kubernetes object you can kubectl get/describe individually.
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: secure-bucket
+spec:
+  requiredParameters:
+    - env
+  resources:
+    - name: suffix
+      type: random:index/randomPet:RandomPet
+      package: random@4.21.0
+      properties:
+        length: 2
+    - name: bucket
+      type: aws:s3/bucketV2:BucketV2
+      package: aws@7.34.0
+      properties:
+        bucket: ${self.name}-${resources.suffix.id}
+        tags:
+          managed-by: pulumi-do-operator
+          composite: ${self.name}
+          env: ${params.env}
+    - name: pab
+      type: aws:s3/bucketPublicAccessBlock:BucketPublicAccessBlock
+      package: aws@7.34.0
+      properties:
+        bucket: ${resources.bucket.outputs.bucket}
+        blockPublicAcls: true
+        blockPublicPolicy: false
+        ignorePublicAcls: true
+        restrictPublicBuckets: false
+    - name: policy
+      type: aws:s3/bucketPolicy:BucketPolicy
+      package: aws@7.34.0
+      properties:
+        bucket: ${resources.bucket.outputs.bucket}
+        policy: '{"Version":"2012-10-17","Statement":[{"Sid":"DenyInsecureTransport","Effect":"Deny","Principal":"*","Action":"s3:*","Resource":["${resources.bucket.outputs.arn}","${resources.bucket.outputs.arn}/*"],"Condition":{"Bool":{"aws:SecureTransport":"false"}}}]}'

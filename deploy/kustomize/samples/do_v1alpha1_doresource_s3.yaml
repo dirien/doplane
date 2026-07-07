@@ -1,0 +1,18 @@
+# An AWS S3 bucket managed Crossplane-style through `pulumi do`. Requires
+# AWS credentials in the provider-credentials Secret (hack/sync-creds.sh).
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoResource
+metadata:
+  labels:
+    app.kubernetes.io/name: pulumi-do-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: doresource-s3
+spec:
+  type: aws:s3/bucketV2:BucketV2
+  # Pin to the plugin version baked into the runner image.
+  package: aws@7.34.0
+  properties:
+    bucket: pulumi-do-operator-e2e
+    tags:
+      managed-by: pulumi-do-operator
+      purpose: e2e-test

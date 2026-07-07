@@ -1,0 +1,22 @@
+# Runner image for pulumi-do-operator Jobs: pulumi CLI, jq and pre-installed
+# provider plugins. Every `pulumi do` operation runs in a short-lived Job pod
+# based on this image, isolated from the controller manager.
+FROM pulumi/pulumi-base:3.250.0
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends jq ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Plugins are baked in so runner pods work with a read-only root filesystem
+# and never download at reconcile time. Versions must match the ones pinned
+# in DoResource spec.package fields (and the registry schema they validate
+# against).
+ENV PULUMI_HOME=/opt/pulumi-home \
+    PULUMI_SKIP_UPDATE_CHECK=true
+ARG AWS_PLUGIN_VERSION=7.34.0
+ARG RANDOM_PLUGIN_VERSION=4.21.0
+RUN pulumi plugin install resource random ${RANDOM_PLUGIN_VERSION} \
+    && pulumi plugin install resource aws ${AWS_PLUGIN_VERSION} \
+    && chmod -R a+rX /opt/pulumi-home
+
+USER 65532:65532

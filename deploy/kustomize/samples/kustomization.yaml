@@ -1,0 +1,5 @@
+## Append samples of your project ##
+resources:
+- do_v1alpha1_doresource.yaml
+- do_v1alpha1_doresource_s3.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

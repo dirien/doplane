@@ -1,0 +1,31 @@
+# Level 2 — two resources with a dependency, no cloud credentials needed.
+# pet-dependent consumes pet-base's id through spec.references:
+#   * it stays Ready=False (WaitingForDependency) until pet-base is Ready,
+#   * the resolved value is templated into its prefix,
+#   * deleting pet-base while pet-dependent exists is blocked
+#     (BlockedByDependents) — teardown is reverse-topological.
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoResource
+metadata:
+  name: pet-base
+spec:
+  type: random:index/randomPet:RandomPet
+  package: random@4.21.0
+  properties:
+    length: 2
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoResource
+metadata:
+  name: pet-dependent
+spec:
+  type: random:index/randomPet:RandomPet
+  package: random@4.21.0
+  properties:
+    length: 1
+  references:
+    - toPath: prefix
+      from:
+        name: pet-base
+        fieldPath: status.id
+      template: from-${value}

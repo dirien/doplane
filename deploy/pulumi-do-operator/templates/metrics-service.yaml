@@ -1,0 +1,24 @@
+{{- if .Values.metrics.service.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "pulumi-do-operator.metricsServiceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pulumi-do-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: metrics
+    control-plane: controller-manager
+  {{- with .Values.metrics.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.metrics.service.type }}
+  ports:
+    - name: https
+      port: {{ .Values.metrics.service.port }}
+      protocol: TCP
+      targetPort: {{ .Values.metrics.service.targetPort }}
+  selector:
+    {{- include "pulumi-do-operator.managerSelectorLabels" . | nindent 4 }}
+{{- end }}

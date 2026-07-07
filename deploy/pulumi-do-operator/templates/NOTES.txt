@@ -1,0 +1,10 @@
+The Pulumi Do operator has been installed in namespace {{ .Release.Namespace }}.
+
+CRDs are installed from the chart crds/ directory. To refresh them from Go types,
+run:
+
+  make manifests
+
+To render this chart with the Makefile image values, run:
+
+  make helm-template IMG=<manager-image> RUNNER_IMG=<runner-image>

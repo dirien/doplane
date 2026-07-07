@@ -1,0 +1,16 @@
+# Credential-free smoke test: a random pet name from the pulumi random
+# provider. Exercises the full reconcile loop without any cloud account.
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoResource
+metadata:
+  labels:
+    app.kubernetes.io/name: pulumi-do-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: doresource-sample
+spec:
+  type: random:index/randomPet:RandomPet
+  # Pin to the plugin version baked into the runner image.
+  package: random@4.21.0
+  properties:
+    length: 3
+    prefix: pdo

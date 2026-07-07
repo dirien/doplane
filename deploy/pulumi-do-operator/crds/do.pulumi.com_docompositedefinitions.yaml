@@ -1,0 +1,121 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: docompositedefinitions.do.pulumi.com
+spec:
+  group: do.pulumi.com
+  names:
+    kind: DoCompositeDefinition
+    listKind: DoCompositeDefinitionList
+    plural: docompositedefinitions
+    shortNames:
+    - docd
+    singular: docompositedefinition
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.composites
+      name: COMPOSITES
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: AGE
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          DoCompositeDefinition is a cluster-scoped, platform-team-owned template
+          for a graph of cloud resources.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: "DoCompositeDefinitionSpec declares a reusable template that
+              expands one\nDoComposite into a graph of DoResources. Property values
+              may contain\nexpressions:\n\n\t${params.<path>}                       composite
+              parameter\n\t${self.name} / ${self.namespace}       composite identity\n\t${resources.<name>.outputs.<path>}
+              \    sibling resource output\n\t${resources.<name>.id}                 sibling
+              resource id\n\nA resources.* expression compiles into a DoResource reference,
+              so\nordering, readiness gating, propagation and ordered teardown are
+              handled\nby the resource graph engine. \"$${\" escapes a literal \"${\"."
+            properties:
+              requiredParameters:
+                description: |-
+                  RequiredParameters lists parameter keys every DoComposite using this
+                  definition must provide.
+                items:
+                  type: string
+                type: array
+              resources:
+                description: Resources are the templates rendered into DoResources.
+                items:
+                  description: CompositeResourceTemplate templates one DoResource
+                    of a composite.
+                  properties:
+                    deletionPolicy:
+                      description: DeletionPolicy for the child resource. Defaults
+                        to Delete.
+                      enum:
+                      - Delete
+                      - Orphan
+                      type: string
+                    name:
+                      description: |-
+                        Name identifies the resource within the composite; it is referenced
+                        by sibling expressions and suffixes the child object's name.
+                      pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+                      type: string
+                    package:
+                      description: Package pins the provider package (e.g. "aws@7.34.0").
+                      type: string
+                    properties:
+                      description: |-
+                        Properties are the resource inputs; string values may contain
+                        expressions (see DoCompositeDefinitionSpec).
+                      x-kubernetes-preserve-unknown-fields: true
+                    type:
+                      description: Type is the Pulumi resource type token.
+                      minLength: 1
+                      type: string
+                  required:
+                  - name
+                  - type
+                  type: object
+                minItems: 1
+                type: array
+            required:
+            - resources
+            type: object
+          status:
+            description: DoCompositeDefinitionStatus reports observed state of a definition.
+            properties:
+              composites:
+                description: |-
+                  Composites is the number of DoComposites currently using this
+                  definition.
+                format: int32
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
