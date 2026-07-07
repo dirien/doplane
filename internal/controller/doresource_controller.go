@@ -83,8 +83,10 @@ func (r *DoResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	// Tag the context with this object's identity: the JobRunner derives
 	// deterministic Job names from it, so interrupted operations are adopted
-	// on retry instead of re-run.
+	// on retry instead of re-run. The namespace tag lets a
+	// per-resource-namespace JobRunner execute in the tenant's namespace.
 	ctx = pulumido.WithOwner(ctx, req.String())
+	ctx = pulumido.WithNamespace(ctx, req.Namespace)
 
 	res := &dov1alpha1.DoResource{}
 	if err := r.reader().Get(ctx, req.NamespacedName, res); err != nil {
@@ -94,7 +96,16 @@ func (r *DoResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	pkg := res.Spec.Package
 	token := res.Spec.Type
 
+	// Resolve the provider profile first: teardown needs the provider's
+	// credentials Secret just as much as creation does.
+	ctx, pkg, halt, err := r.resolveProvider(ctx, res, pkg, token)
+	if halt != nil {
+		return *halt, err
+	}
+
 	// Deletion: tear down the external resource, then release the finalizer.
+	// A vanished provider must not wedge the finalizer — the operation runs
+	// with the deployment-default credentials and surfaces any auth failure.
 	if !res.DeletionTimestamp.IsZero() {
 		return r.reconcileDelete(ctx, res)
 	}
@@ -104,6 +115,13 @@ func (r *DoResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		if err := r.Update(ctx, res); err != nil {
 			return ctrl.Result{}, err
 		}
+	}
+
+	// Unpinned providers still work through registry resolution, but their
+	// operations are not reproducible and bypass the shared plugin cache.
+	if !pulumido.PackagePinned(pkg) {
+		r.Recorder.Eventf(res, "Warning", "ProviderNotPinned",
+			"provider package is not pinned; set spec.package to name@version for reproducible operations")
 	}
 
 	props, err := decodeProperties(res.Spec.Properties)
@@ -433,6 +451,16 @@ func compact(s string) string {
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *DoResourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &dov1alpha1.DoResource{}, providerRefIndexKey,
+		func(o client.Object) []string {
+			res, ok := o.(*dov1alpha1.DoResource)
+			if !ok || res.Spec.ProviderRef == nil {
+				return nil
+			}
+			return []string{res.Spec.ProviderRef.Name}
+		}); err != nil {
+		return err
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		// Generation-gated: our own status writes must not re-trigger the
 		// object's reconcile, or a provider with volatile outputs turns
@@ -445,6 +473,9 @@ func (r *DoResourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// its graph neighbors: dependents (value propagation, readiness
 		// gating) and sources (deletion unblocking).
 		Watches(&dov1alpha1.DoResource{}, handler.EnqueueRequestsFromMapFunc(r.mapGraphNeighbors)).
+		// Provider profile edits change resolved packages and credentials
+		// for every resource referencing them.
+		Watches(&dov1alpha1.DoProvider{}, handler.EnqueueRequestsFromMapFunc(r.mapProviderResources)).
 		// Reconciles block on runner Jobs for tens of seconds; allow a few
 		// objects in flight. The same object is never reconciled concurrently.
 		WithOptions(controller.Options{MaxConcurrentReconciles: 4}).

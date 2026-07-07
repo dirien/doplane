@@ -119,6 +119,7 @@ func renderChild(rc *renderContext, tpl *dov1alpha1.CompositeResourceTemplate) (
 		Spec: dov1alpha1.DoResourceSpec{
 			Type:           tpl.Type,
 			Package:        tpl.Package,
+			ProviderRef:    tpl.ProviderRef.DeepCopy(),
 			DeletionPolicy: tpl.DeletionPolicy,
 			Properties:     &apiextensionsv1.JSON{Raw: raw},
 			References:     refs,
