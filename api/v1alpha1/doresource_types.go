@@ -57,6 +57,13 @@ type DoResourceSpec struct {
 	// +optional
 	Package string `json:"package,omitempty"`
 
+	// ProviderRef resolves package and credentials from a cluster-scoped
+	// DoProvider profile, so platform teams pin provider versions in one
+	// place. When both providerRef and package are set they must agree,
+	// otherwise the resource is rejected.
+	// +optional
+	ProviderRef *ProviderReference `json:"providerRef,omitempty"`
+
 	// Properties holds the resource input properties. They are validated
 	// against the provider's JSON schema from the Pulumi registry before any
 	// operation is attempted.
@@ -80,6 +87,13 @@ type DoResourceSpec struct {
 	// external resource until all dependents are gone.
 	// +optional
 	References []Reference `json:"references,omitempty"`
+}
+
+// ProviderReference points at a cluster-scoped DoProvider profile.
+type ProviderReference struct {
+	// Name of the DoProvider.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
 }
 
 // Reference wires a single value from another DoResource into a property.

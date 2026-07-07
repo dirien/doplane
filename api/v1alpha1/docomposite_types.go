@@ -59,6 +59,11 @@ type CompositeResourceTemplate struct {
 	// +optional
 	Package string `json:"package,omitempty"`
 
+	// ProviderRef resolves package and credentials from a cluster-scoped
+	// DoProvider profile; copied verbatim into the child DoResource.
+	// +optional
+	ProviderRef *ProviderReference `json:"providerRef,omitempty"`
+
 	// DeletionPolicy for the child resource. Defaults to Delete.
 	// +kubebuilder:validation:Enum=Delete;Orphan
 	// +optional

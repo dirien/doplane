@@ -91,6 +91,18 @@ spec:
                         Properties are the resource inputs; string values may contain
                         expressions (see DoCompositeDefinitionSpec).
                       x-kubernetes-preserve-unknown-fields: true
+                    providerRef:
+                      description: |-
+                        ProviderRef resolves package and credentials from a cluster-scoped
+                        DoProvider profile; copied verbatim into the child DoResource.
+                      properties:
+                        name:
+                          description: Name of the DoProvider.
+                          minLength: 1
+                          type: string
+                      required:
+                      - name
+                      type: object
                     type:
                       description: Type is the Pulumi resource type token.
                       minLength: 1

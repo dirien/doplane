@@ -85,6 +85,20 @@ spec:
                   against the provider's JSON schema from the Pulumi registry before any
                   operation is attempted.
                 x-kubernetes-preserve-unknown-fields: true
+              providerRef:
+                description: |-
+                  ProviderRef resolves package and credentials from a cluster-scoped
+                  DoProvider profile, so platform teams pin provider versions in one
+                  place. When both providerRef and package are set they must agree,
+                  otherwise the resource is rejected.
+                properties:
+                  name:
+                    description: Name of the DoProvider.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
               references:
                 description: |-
                   References wire values from other DoResources in the same namespace
