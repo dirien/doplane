@@ -96,8 +96,17 @@ spec:
                         ProviderRef resolves package and credentials from a cluster-scoped
                         DoProvider profile; copied verbatim into the child DoResource.
                       properties:
+                        kind:
+                          default: DoProvider
+                          description: |-
+                            Kind of the profile: DoProvider (cluster-scoped) or DoProviderConfig
+                            (same namespace as this resource).
+                          enum:
+                          - DoProvider
+                          - DoProviderConfig
+                          type: string
                         name:
-                          description: Name of the DoProvider.
+                          description: Name of the profile object.
                           minLength: 1
                           type: string
                       required:

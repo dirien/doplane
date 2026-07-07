@@ -87,13 +87,95 @@ type DoResourceSpec struct {
 	// external resource until all dependents are gone.
 	// +optional
 	References []Reference `json:"references,omitempty"`
+
+	// WriteConnectionSecretToRef names a Secret in this resource's
+	// namespace where the selected connectionDetails are published after
+	// every successful sync. The Secret is owned by this resource and
+	// garbage-collected with it.
+	// +optional
+	WriteConnectionSecretToRef *LocalSecretReference `json:"writeConnectionSecretToRef,omitempty"`
+
+	// ConnectionDetails selects what lands in the connection Secret. Each
+	// entry provides exactly one of fromFieldPath (read from this
+	// resource's status) or value (static).
+	// +optional
+	ConnectionDetails []ConnectionDetail `json:"connectionDetails,omitempty"`
+
+	// ValuesFrom injects Secret values into properties without the value
+	// ever being stored in this object, its status, events or logs: runner
+	// pods receive the value as a kubelet-resolved environment variable
+	// (the Secret must exist in the namespace the runner Job executes in)
+	// and substitute it into the property just before the provider call;
+	// streamed runner output and recorded state are redacted. Not
+	// supported for component resources (their engine checkpoint would
+	// persist the value).
+	// +optional
+	ValuesFrom []ValueFrom `json:"valuesFrom,omitempty"`
 }
 
-// ProviderReference points at a cluster-scoped DoProvider profile.
-type ProviderReference struct {
-	// Name of the DoProvider.
+// ValueFrom injects one Secret value into a property path.
+type ValueFrom struct {
+	// ToPath is a dot-separated path within spec.properties to set (same
+	// syntax as references[].toPath).
+	// +kubebuilder:validation:MinLength=1
+	ToPath string `json:"toPath"`
+
+	// SecretKeyRef selects the Secret key holding the value.
+	SecretKeyRef SecretKeySelector `json:"secretKeyRef"`
+}
+
+// SecretKeySelector selects one key of a Secret in the namespace the
+// runner Job executes in.
+type SecretKeySelector struct {
+	// Name of the Secret.
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
+
+	// Key within the Secret.
+	// +kubebuilder:validation:MinLength=1
+	Key string `json:"key"`
+}
+
+// ConnectionDetail selects one key of the connection Secret.
+type ConnectionDetail struct {
+	// Name is the Secret data key.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// FromFieldPath reads the value from this resource: "status.id" or a
+	// path below "status.outputs.". A not-yet-populated path skips the key
+	// and surfaces a Warning event (never the value itself).
+	// +optional
+	FromFieldPath string `json:"fromFieldPath,omitempty"`
+
+	// Value is a static value for the key.
+	// +optional
+	Value string `json:"value,omitempty"`
+}
+
+// Provider profile kinds selectable in ProviderReference.Kind.
+const (
+	// ProviderKindCluster selects the cluster-scoped DoProvider (default).
+	ProviderKindCluster = "DoProvider"
+	// ProviderKindConfig selects a DoProviderConfig in the resource's
+	// namespace.
+	ProviderKindConfig = "DoProviderConfig"
+)
+
+// ProviderReference points at a provider profile: a cluster-scoped
+// DoProvider (platform-owned, the default) or a namespaced
+// DoProviderConfig in the resource's own namespace (tenant-owned).
+type ProviderReference struct {
+	// Name of the profile object.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// Kind of the profile: DoProvider (cluster-scoped) or DoProviderConfig
+	// (same namespace as this resource).
+	// +kubebuilder:validation:Enum=DoProvider;DoProviderConfig
+	// +kubebuilder:default=DoProvider
+	// +optional
+	Kind string `json:"kind,omitempty"`
 }
 
 // Reference wires a single value from another DoResource into a property.

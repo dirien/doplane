@@ -63,6 +63,32 @@ spec:
           spec:
             description: DoResourceSpec defines the desired state of DoResource.
             properties:
+              connectionDetails:
+                description: |-
+                  ConnectionDetails selects what lands in the connection Secret. Each
+                  entry provides exactly one of fromFieldPath (read from this
+                  resource's status) or value (static).
+                items:
+                  description: ConnectionDetail selects one key of the connection
+                    Secret.
+                  properties:
+                    fromFieldPath:
+                      description: |-
+                        FromFieldPath reads the value from this resource: "status.id" or a
+                        path below "status.outputs.". A not-yet-populated path skips the key
+                        and surfaces a Warning event (never the value itself).
+                      type: string
+                    name:
+                      description: Name is the Secret data key.
+                      minLength: 1
+                      type: string
+                    value:
+                      description: Value is a static value for the key.
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
               deletionPolicy:
                 default: Delete
                 description: |-
@@ -92,8 +118,17 @@ spec:
                   place. When both providerRef and package are set they must agree,
                   otherwise the resource is rejected.
                 properties:
+                  kind:
+                    default: DoProvider
+                    description: |-
+                      Kind of the profile: DoProvider (cluster-scoped) or DoProviderConfig
+                      (same namespace as this resource).
+                    enum:
+                    - DoProvider
+                    - DoProviderConfig
+                    type: string
                   name:
-                    description: Name of the DoProvider.
+                    description: Name of the profile object.
                     minLength: 1
                     type: string
                 required:
@@ -157,6 +192,61 @@ spec:
                 x-kubernetes-validations:
                 - message: spec.type is immutable
                   rule: self == oldSelf
+              valuesFrom:
+                description: |-
+                  ValuesFrom injects Secret values into properties without the value
+                  ever being stored in this object, its status, events or logs: runner
+                  pods receive the value as a kubelet-resolved environment variable
+                  (the Secret must exist in the namespace the runner Job executes in)
+                  and substitute it into the property just before the provider call;
+                  streamed runner output and recorded state are redacted. Not
+                  supported for component resources (their engine checkpoint would
+                  persist the value).
+                items:
+                  description: ValueFrom injects one Secret value into a property
+                    path.
+                  properties:
+                    secretKeyRef:
+                      description: SecretKeyRef selects the Secret key holding the
+                        value.
+                      properties:
+                        key:
+                          description: Key within the Secret.
+                          minLength: 1
+                          type: string
+                        name:
+                          description: Name of the Secret.
+                          minLength: 1
+                          type: string
+                      required:
+                      - key
+                      - name
+                      type: object
+                    toPath:
+                      description: |-
+                        ToPath is a dot-separated path within spec.properties to set (same
+                        syntax as references[].toPath).
+                      minLength: 1
+                      type: string
+                  required:
+                  - secretKeyRef
+                  - toPath
+                  type: object
+                type: array
+              writeConnectionSecretToRef:
+                description: |-
+                  WriteConnectionSecretToRef names a Secret in this resource's
+                  namespace where the selected connectionDetails are published after
+                  every successful sync. The Secret is owned by this resource and
+                  garbage-collected with it.
+                properties:
+                  name:
+                    description: Name of the Secret.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
             required:
             - type
             type: object
