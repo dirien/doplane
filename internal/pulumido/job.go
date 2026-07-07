@@ -67,6 +67,40 @@ func ownerFromContext(ctx context.Context) string {
 	return owner
 }
 
+// credentialsCtxKey carries a provider-specific credentials Secret name
+// resolved from a DoProvider profile; it overrides the JobRunner's default
+// CredentialsSecret for the tagged operation.
+type credentialsCtxKey struct{}
+
+// WithCredentialsSecret tags ctx with the credentials Secret runner Jobs of
+// this operation load their environment from (resolved in the Job's
+// namespace).
+func WithCredentialsSecret(ctx context.Context, name string) context.Context {
+	return context.WithValue(ctx, credentialsCtxKey{}, name)
+}
+
+func credentialsFromContext(ctx context.Context) string {
+	name, _ := ctx.Value(credentialsCtxKey{}).(string)
+	return name
+}
+
+// namespaceCtxKey carries the namespace of the object an operation is
+// performed for, so a per-resource-namespace JobRunner can execute the Job —
+// and resolve its credentials Secret — in the tenant's namespace.
+type namespaceCtxKey struct{}
+
+// WithNamespace tags ctx with the owning object's namespace. A JobRunner in
+// per-resource-namespace mode runs the operation's Job there, picking up the
+// credentials Secret of that namespace (per-tenant credentials).
+func WithNamespace(ctx context.Context, namespace string) context.Context {
+	return context.WithValue(ctx, namespaceCtxKey{}, namespace)
+}
+
+func namespaceFromContext(ctx context.Context) string {
+	ns, _ := ctx.Value(namespaceCtxKey{}).(string)
+	return ns
+}
+
 // JobRunner ships every operation to a dedicated, hardened Kubernetes Job
 // running the doplane-runner binary, so provider plugins execute in their own
 // container with their own resource limits and credentials, isolated from
@@ -76,12 +110,28 @@ type JobRunner struct {
 	Clientset kubernetes.Interface
 	// Namespace is where runner Jobs are created (the operator namespace).
 	Namespace string
+	// PerResourceNamespace runs each Job in the owning object's namespace
+	// (from WithNamespace) instead of Namespace. The credentials Secret is
+	// then resolved in the tenant's namespace, isolating cloud credentials
+	// per namespace. Operations without a namespace tag (e.g. shared schema
+	// fetches) fall back to Namespace, and teardown operations fall back to
+	// Namespace when the tenant namespace is already terminating (Kubernetes
+	// rejects new Jobs there) so finalizers cannot wedge.
+	PerResourceNamespace bool
 	// Image is the runner image containing the doplane-runner binary, the
 	// pulumi CLI, language toolchains and baked provider plugins.
 	Image string
 	// CredentialsSecret is an optional Secret whose keys become environment
 	// variables of the runner (cloud provider credentials, registry token).
+	// Resolved in the namespace the Job runs in.
 	CredentialsSecret string
+	// PluginCachePVC is an optional PersistentVolumeClaim holding the shared
+	// writable plugin cache. When set, runner pods mount it at
+	// PluginCacheMountPath and install pinned provider plugins there on
+	// first use — new providers need no runner image rebuild.
+	PluginCachePVC string
+	// PluginCacheMountPath is where the cache PVC is mounted in runner pods.
+	PluginCacheMountPath string
 	// Timeout bounds a single operation end to end.
 	Timeout time.Duration
 }
@@ -173,6 +223,55 @@ func (r *JobRunner) DeleteComponent(ctx context.Context, token, pkg string, engi
 	return err
 }
 
+// jobNamespace picks where an operation's Job runs: the owning object's
+// namespace in per-resource mode (tenant credentials live there), the
+// operator namespace otherwise.
+func (r *JobRunner) jobNamespace(ctx context.Context) string {
+	if r.PerResourceNamespace {
+		if ns := namespaceFromContext(ctx); ns != "" {
+			return ns
+		}
+	}
+	return r.Namespace
+}
+
+// teardownVerb reports whether an operation removes the external resource —
+// the operations that must still run while the owning namespace is being
+// deleted, or its finalizers can never clear.
+func teardownVerb(verb string) bool {
+	return verb == runnerops.VerbDelete || verb == runnerops.VerbEngineDestroy
+}
+
+// ensureJob creates the operation's Job in namespace (adopting the Job left
+// by a previous, interrupted attempt of this exact operation) and returns
+// the namespace the Job actually lives in. A terminating tenant namespace
+// rejects new Jobs; teardown operations then fall back to the operator
+// namespace — and its credentials Secret, since the tenant's Secret is
+// being deleted too — so DoResource finalizers cannot wedge the namespace.
+func (r *JobRunner) ensureJob(ctx context.Context, namespace, name, verb, opJSON string) (string, error) {
+	credentials := r.CredentialsSecret
+	if fromProvider := credentialsFromContext(ctx); fromProvider != "" {
+		// A DoProvider profile pinned this operation to its own Secret.
+		credentials = fromProvider
+	}
+	job := r.buildJob(name, namespace, credentials, verb, opJSON)
+	_, err := r.Clientset.BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{})
+	switch {
+	case err == nil || apierrors.IsAlreadyExists(err):
+		return namespace, nil
+	case namespace != r.Namespace && teardownVerb(verb) && apierrors.HasStatusCause(err, corev1.NamespaceTerminatingCause):
+		fallback := r.buildJob(name, r.Namespace, credentials, verb, opJSON)
+		if _, err := r.Clientset.BatchV1().Jobs(r.Namespace).Create(ctx, fallback, metav1.CreateOptions{}); err != nil &&
+			!apierrors.IsAlreadyExists(err) {
+			return "", fmt.Errorf("creating fallback runner job %s/%s for terminating namespace %s: %w",
+				r.Namespace, name, namespace, err)
+		}
+		return r.Namespace, nil
+	default:
+		return "", fmt.Errorf("creating runner job %s/%s: %w", namespace, name, err)
+	}
+}
+
 // jobName derives a deterministic name from the owning object and the exact
 // operation document, so a retried reconcile adopts the previous attempt's
 // Job instead of re-running the cloud mutation. Operations without an owner
@@ -200,17 +299,13 @@ func (r *JobRunner) executeOp(ctx context.Context, op runnerops.Op) (runnerops.R
 		return runnerops.Result{}, err
 	}
 	name := r.jobName(ctx, op.Verb, string(opJSON))
-	job := r.buildJob(name, op.Verb, string(opJSON))
 
 	ctx, cancel := context.WithTimeout(ctx, r.timeout())
 	defer cancel()
 
-	if _, err := r.Clientset.BatchV1().Jobs(r.Namespace).Create(ctx, job, metav1.CreateOptions{}); err != nil {
-		if !apierrors.IsAlreadyExists(err) {
-			return runnerops.Result{}, fmt.Errorf("creating runner job %s: %w", name, err)
-		}
-		// Adopting the Job left by a previous, interrupted attempt of this
-		// exact operation (same owner and op document).
+	namespace, err := r.ensureJob(ctx, r.jobNamespace(ctx), name, op.Verb, string(opJSON))
+	if err != nil {
+		return runnerops.Result{}, err
 	}
 	cleanup := false
 	defer func() {
@@ -219,7 +314,7 @@ func (r *JobRunner) executeOp(ctx context.Context, op runnerops.Op) (runnerops.R
 		}
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cleanupCancel()
-		_ = r.Clientset.BatchV1().Jobs(r.Namespace).Delete(cleanupCtx, name, metav1.DeleteOptions{
+		_ = r.Clientset.BatchV1().Jobs(namespace).Delete(cleanupCtx, name, metav1.DeleteOptions{
 			PropagationPolicy: ptr.To(metav1.DeletePropagationBackground),
 		})
 	}()
@@ -227,7 +322,7 @@ func (r *JobRunner) executeOp(ctx context.Context, op runnerops.Op) (runnerops.R
 	failed := false
 	var failMsg string
 	err = wait.PollUntilContextCancel(ctx, 2*time.Second, true, func(ctx context.Context) (bool, error) {
-		j, err := r.Clientset.BatchV1().Jobs(r.Namespace).Get(ctx, name, metav1.GetOptions{})
+		j, err := r.Clientset.BatchV1().Jobs(namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			if apierrors.IsNotFound(err) {
 				return false, fmt.Errorf("runner job %s disappeared", name)
@@ -253,7 +348,7 @@ func (r *JobRunner) executeOp(ctx context.Context, op runnerops.Op) (runnerops.R
 		return runnerops.Result{}, fmt.Errorf("waiting for runner job %s (%s): %w", name, op.Verb, err)
 	}
 
-	logs, logsErr := r.podLogs(name)
+	logs, logsErr := r.podLogs(namespace, name)
 	if failed {
 		// The doplane-runner binary exits non-zero only for infrastructure
 		// problems (op failures travel in the envelope), so a failed Job is
@@ -284,7 +379,7 @@ func (r *JobRunner) executeOp(ctx context.Context, op runnerops.Op) (runnerops.R
 // podLogs fetches the logs of the Job's most recent pod, retrying transient
 // API failures: for a completed Job these logs are the only copy of the
 // operation result.
-func (r *JobRunner) podLogs(jobName string) (string, error) {
+func (r *JobRunner) podLogs(namespace, jobName string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	var lastErr error
@@ -296,7 +391,7 @@ func (r *JobRunner) podLogs(jobName string) (string, error) {
 			case <-time.After(2 * time.Second):
 			}
 		}
-		pods, err := r.Clientset.CoreV1().Pods(r.Namespace).List(ctx, metav1.ListOptions{
+		pods, err := r.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 			LabelSelector: "job-name=" + jobName,
 		})
 		if err != nil {
@@ -311,7 +406,7 @@ func (r *JobRunner) podLogs(jobName string) (string, error) {
 			return pods.Items[i].CreationTimestamp.Before(&pods.Items[j].CreationTimestamp)
 		})
 		pod := pods.Items[len(pods.Items)-1]
-		raw, err := r.Clientset.CoreV1().Pods(r.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{}).Do(ctx).Raw()
+		raw, err := r.Clientset.CoreV1().Pods(namespace).GetLogs(pod.Name, &corev1.PodLogOptions{}).Do(ctx).Raw()
 		if err != nil {
 			lastErr = err
 			continue
@@ -321,25 +416,47 @@ func (r *JobRunner) podLogs(jobName string) (string, error) {
 	return "", lastErr
 }
 
-func (r *JobRunner) buildJob(name, verb, opJSON string) *batchv1.Job {
+func (r *JobRunner) buildJob(name, namespace, credentialsSecret, verb, opJSON string) *batchv1.Job {
 	env := []corev1.EnvVar{
 		{Name: "DOPLANE_OP", Value: opJSON},
 		{Name: "DOPLANE_BAKED_PLUGINS", Value: bakedPluginsDir},
 		{Name: "PULUMI_SKIP_UPDATE_CHECK", Value: "true"},
 	}
 	var envFrom []corev1.EnvFromSource
-	if r.CredentialsSecret != "" {
+	if credentialsSecret != "" {
 		envFrom = append(envFrom, corev1.EnvFromSource{
 			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{Name: r.CredentialsSecret},
+				LocalObjectReference: corev1.LocalObjectReference{Name: credentialsSecret},
 				Optional:             ptr.To(true),
 			},
 		})
 	}
+	volumes := []corev1.Volume{{
+		Name:         "tmp",
+		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+	}}
+	mounts := []corev1.VolumeMount{{Name: "tmp", MountPath: "/tmp"}}
+	var fsGroup *int64
+	// PVC references are namespace-local: the cache claim lives in the
+	// operator namespace, so per-resource-namespace Jobs skip it and fall
+	// back to baked plugins plus on-demand downloads.
+	if r.PluginCachePVC != "" && namespace == r.Namespace {
+		env = append(env, corev1.EnvVar{Name: runnerops.EnvPluginCache, Value: r.PluginCacheMountPath})
+		volumes = append(volumes, corev1.Volume{
+			Name: "plugin-cache",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: r.PluginCachePVC},
+			},
+		})
+		mounts = append(mounts, corev1.VolumeMount{Name: "plugin-cache", MountPath: r.PluginCacheMountPath})
+		// The non-root runner (uid/gid 65532) must be able to write the
+		// cache volume; the root filesystem stays read-only.
+		fsGroup = ptr.To(int64(65532))
+	}
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: r.Namespace,
+			Namespace: namespace,
 			Labels: map[string]string{
 				labelManagedBy: operatorName,
 				labelVerb:      verb,
@@ -363,6 +480,7 @@ func (r *JobRunner) buildJob(name, verb, opJSON string) *batchv1.Job {
 						RunAsNonRoot:   ptr.To(true),
 						RunAsUser:      ptr.To(int64(65532)),
 						RunAsGroup:     ptr.To(int64(65532)),
+						FSGroup:        fsGroup,
 						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 					},
 					Containers: []corev1.Container{{
@@ -376,7 +494,7 @@ func (r *JobRunner) buildJob(name, verb, opJSON string) *batchv1.Job {
 							ReadOnlyRootFilesystem:   ptr.To(true),
 							Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 						},
-						VolumeMounts: []corev1.VolumeMount{{Name: "tmp", MountPath: "/tmp"}},
+						VolumeMounts: mounts,
 						Resources: corev1.ResourceRequirements{
 							Requests: corev1.ResourceList{
 								corev1.ResourceCPU:    resource.MustParse("100m"),
@@ -387,10 +505,7 @@ func (r *JobRunner) buildJob(name, verb, opJSON string) *batchv1.Job {
 							},
 						},
 					}},
-					Volumes: []corev1.Volume{{
-						Name:         "tmp",
-						VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
-					}},
+					Volumes: volumes,
 				},
 			},
 		},

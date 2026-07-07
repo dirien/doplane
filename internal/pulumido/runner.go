@@ -44,6 +44,17 @@ var ErrNotFound = errors.New("external resource not found")
 // re-run the mutation.
 var ErrOutputUnavailable = errors.New("operation completed but its output is unavailable")
 
+// PackagePinned reports whether a package reference pins a version. Git and
+// private-registry references carry their own pinning scheme; only plain
+// references without "name@version" are unpinned (including an empty
+// reference, where the package is inferred from the type token).
+func PackagePinned(pkg string) bool {
+	if kind, _ := runnerops.ClassifyPackageRef(pkg); kind != runnerops.PkgKindPlain {
+		return true
+	}
+	return strings.Contains(pkg, "@")
+}
+
 // CodedError carries the runner's typed failure code; the reconciler
 // surfaces it directly as the Synced condition reason.
 type CodedError struct {
