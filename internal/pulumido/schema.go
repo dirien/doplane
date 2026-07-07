@@ -164,22 +164,22 @@ func checkType(path string, v any, ps *PropertySchema, depth int) []string {
 	switch ps.Type {
 	case "string":
 		if _, ok := v.(string); !ok {
-			return []string{fmt.Sprintf("property %q must be a string, got %s", path, jsonKind(v))}
+			return []string{fmt.Sprintf("property %q must be a string, got %s", path, runnerops.JSONKind(v))}
 		}
 	case "boolean":
 		if _, ok := v.(bool); !ok {
-			return []string{fmt.Sprintf("property %q must be a boolean, got %s", path, jsonKind(v))}
+			return []string{fmt.Sprintf("property %q must be a boolean, got %s", path, runnerops.JSONKind(v))}
 		}
 	case "integer", "number":
 		switch v.(type) {
 		case json.Number, float64, int64, int:
 		default:
-			return []string{fmt.Sprintf("property %q must be a %s, got %s", path, ps.Type, jsonKind(v))}
+			return []string{fmt.Sprintf("property %q must be a %s, got %s", path, ps.Type, runnerops.JSONKind(v))}
 		}
 	case "array":
 		arr, ok := v.([]any)
 		if !ok {
-			return []string{fmt.Sprintf("property %q must be an array, got %s", path, jsonKind(v))}
+			return []string{fmt.Sprintf("property %q must be an array, got %s", path, runnerops.JSONKind(v))}
 		}
 		if ps.Items == nil {
 			return nil
@@ -192,7 +192,7 @@ func checkType(path string, v any, ps *PropertySchema, depth int) []string {
 	case "object":
 		obj, ok := v.(map[string]any)
 		if !ok {
-			return []string{fmt.Sprintf("property %q must be an object, got %s", path, jsonKind(v))}
+			return []string{fmt.Sprintf("property %q must be an object, got %s", path, runnerops.JSONKind(v))}
 		}
 		if ps.AdditionalProperties == nil {
 			return nil
@@ -209,23 +209,4 @@ func checkType(path string, v any, ps *PropertySchema, depth int) []string {
 		return out
 	}
 	return nil
-}
-
-func jsonKind(v any) string {
-	switch v.(type) {
-	case string:
-		return "string"
-	case bool:
-		return "boolean"
-	case json.Number, float64:
-		return "number"
-	case []any:
-		return "array"
-	case map[string]any:
-		return "object"
-	case nil:
-		return "null"
-	default:
-		return fmt.Sprintf("%T", v)
-	}
 }

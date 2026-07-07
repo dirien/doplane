@@ -46,6 +46,10 @@ type Runner struct {
 	// Progress receives pulumi's human output (pod logs / dev console).
 	// Defaults to os.Stderr, keeping stdout free for the result envelope.
 	Progress io.Writer
+	// LookupEnv resolves secret input environment variables; defaults to
+	// os.LookupEnv (the Job path). Dev mode injects resolved values here
+	// instead of polluting the process environment.
+	LookupEnv func(string) (string, bool)
 }
 
 func (r *Runner) bin() string {
@@ -94,16 +98,50 @@ func (r *Runner) Execute(ctx context.Context, op Op) Result {
 		return failure(CodeOperationFailed, "%v", err)
 	}
 
+	// Component engine checkpoints persist their inputs verbatim (they end
+	// up in status.engineState), so secret inputs cannot be kept out of
+	// etcd for engine verbs — refuse rather than leak.
+	if len(op.SecretInputs) > 0 && (op.Verb == VerbEngineUp || op.Verb == VerbEngineDestroy) {
+		return failure(CodeInvalidSpec, "secret inputs are not supported for component resources")
+	}
+
+	// Substitute secret input values (delivered out of band as env vars)
+	// into the properties, and redact them from every output channel:
+	// streamed progress, error messages and the recorded state.
+	secrets, err := applySecretInputs(&op, r.lookupEnv())
+	if err != nil {
+		return failure(CodeSecretInputMissing, "%v", err)
+	}
+	run := *r
+	var redactor *redactingWriter
+	if len(secrets) > 0 {
+		redactor = newRedactingWriter(r.progress(), secrets)
+		run.Progress = redactor
+	}
+
+	var res Result
 	switch op.Verb {
 	case VerbCreate, VerbPatch, VerbRead, VerbDelete:
-		return r.executeDo(ctx, ws, op)
+		res = run.executeDo(ctx, ws, op)
 	case VerbSchema:
-		return r.executeSchema(ctx, ws, op)
+		res = run.executeSchema(ctx, ws, op)
 	case VerbEngineUp, VerbEngineDestroy:
-		return r.executeEngine(ctx, ws, op)
+		res = run.executeEngine(ctx, ws, op)
 	default:
-		return failure(CodeInvalidSpec, "unknown verb %q", op.Verb)
+		res = failure(CodeInvalidSpec, "unknown verb %q", op.Verb)
 	}
+	if redactor != nil {
+		_ = redactor.Flush()
+	}
+	redactResult(&res, secrets)
+	return res
+}
+
+func (r *Runner) lookupEnv() func(string) (string, bool) {
+	if r.LookupEnv != nil {
+		return r.LookupEnv
+	}
+	return os.LookupEnv
 }
 
 // executeDo runs one stateless `pulumi do` verb.

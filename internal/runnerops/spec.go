@@ -54,6 +54,7 @@ const (
 	CodeOutputParse            = "OutputParseFailed"
 	CodePluginInstall          = "PluginInstallFailed"
 	CodePluginCacheNotWritable = "PluginCacheNotWritable"
+	CodeSecretInputMissing     = "SecretInputMissing"
 )
 
 // Op is the single JSON document describing one operation. It reaches the
@@ -65,6 +66,12 @@ type Op struct {
 	ID          string          `json:"id,omitempty"`
 	Properties  map[string]any  `json:"properties,omitempty"`
 	EngineState json.RawMessage `json:"engineState,omitempty"`
+	// SecretInputs maps property paths to the names of environment
+	// variables holding their values. Only the mapping travels in the op
+	// document — the values reach the runner process out of band (kubelet
+	// secretKeyRef env in Jobs) and are substituted just before the
+	// provider call, then redacted from all output.
+	SecretInputs map[string]string `json:"secretInputs,omitempty"`
 }
 
 // Result is the single JSON envelope emitted for every operation. The

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package pulumido
+package runnerops
 
 import (
 	"encoding/json"
@@ -170,7 +170,7 @@ func SetPath(props map[string]any, path string, value any) error {
 			}
 			cur = node[seg.index]
 		default:
-			return fmt.Errorf("path %q: cannot descend into %s", path, jsonKind(cur))
+			return fmt.Errorf("path %q: cannot descend into %s", path, JSONKind(cur))
 		}
 	}
 	return nil
@@ -228,5 +228,25 @@ func RenderScalar(v any) string {
 			return fmt.Sprintf("%v", t)
 		}
 		return string(raw)
+	}
+}
+
+// JSONKind names the JSON kind of a decoded value for error messages.
+func JSONKind(v any) string {
+	switch v.(type) {
+	case string:
+		return "string"
+	case bool:
+		return "boolean"
+	case json.Number, float64:
+		return "number"
+	case []any:
+		return "array"
+	case map[string]any:
+		return "object"
+	case nil:
+		return "null"
+	default:
+		return fmt.Sprintf("%T", v)
 	}
 }
