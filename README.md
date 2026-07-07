@@ -1,10 +1,10 @@
 # pulumi-do-operator
 
 A Kubernetes operator that manages individual cloud resources through the new
-[`pulumi do`](https://www.pulumi.com/docs/) CLI — Crossplane-style, but with
-zero Pulumi programs, stacks, or state files. The desired state lives in a
-`DoResource` custom resource, the observed cloud state is written back into
-its `status` and therefore persisted in etcd.
+[`pulumi do`](https://www.pulumi.com/docs/) CLI — with zero Pulumi programs,
+stacks, or state files. The desired state lives in a `DoResource` custom
+resource, the observed cloud state is written back into its `status` and
+therefore persisted in etcd.
 
 ```yaml
 apiVersion: do.pulumi.com/v1alpha1
@@ -52,8 +52,7 @@ state file. This operator turns that into a declarative control loop:
 | deleted | finalizer runs `pulumi do <type> delete <id>` (unless `deletionPolicy: Orphan`) |
 
 The resulting resource state (id + all outputs) is stored on the CR's status
-subresource — etcd is the state store, exactly like Crossplane's managed
-resources.
+subresource — etcd is the state store.
 
 ### Isolated runner Jobs
 
@@ -157,8 +156,8 @@ make run      # run the manager locally in exec mode (uses your pulumi login/env
 - There is a small crash window between a successful create and the status
   write; for resources with client-chosen names the retry fails loudly
   (AlreadyExists), for server-named resources it can leak one resource.
-  Crossplane solves this with pre-create external-name bookkeeping — a good
-  future improvement.
+  Pre-create external-name bookkeeping would close this — a good future
+  improvement.
 - `spec.properties` are treated as non-secret; support for resolving values
   from Secrets would be the next step toward production use.
 - `status.outputs` stores what `pulumi do` prints. Secret-flagged outputs

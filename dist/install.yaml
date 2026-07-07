@@ -340,8 +340,8 @@ spec:
       openAPIV3Schema:
         description: |-
           DoResource is the Schema for the doresources API. It represents a single
-          cloud resource managed via `pulumi do`, Crossplane-style: spec.properties
-          is the desired input state, status.outputs is the observed cloud state.
+          cloud resource managed via `pulumi do`: spec.properties is the desired
+          input state, status.outputs is the observed cloud state.
         properties:
           apiVersion:
             description: |-
@@ -419,7 +419,8 @@ spec:
                       description: |-
                         Template optionally transforms the resolved value: every "${value}"
                         occurrence in the template is replaced with the value rendered as a
-                        string (objects and arrays render as compact JSON).
+                        string (objects and arrays render as compact JSON). "$${value}"
+                        escapes a literal "${value}".
                       type: string
                     toPath:
                       description: |-
@@ -862,7 +863,7 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
-        image: controller:latest
+        image: pulumi-do-operator:dev
         livenessProbe:
           httpGet:
             path: /healthz

@@ -153,8 +153,8 @@ type DoResourceStatus struct {
 // +kubebuilder:printcolumn:name="AGE",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // DoResource is the Schema for the doresources API. It represents a single
-// cloud resource managed via `pulumi do`, Crossplane-style: spec.properties
-// is the desired input state, status.outputs is the observed cloud state.
+// cloud resource managed via `pulumi do`: spec.properties is the desired
+// input state, status.outputs is the observed cloud state.
 type DoResource struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
