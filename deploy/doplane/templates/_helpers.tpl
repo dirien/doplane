@@ -82,6 +82,116 @@ Create the service account name to use.
 {{- end -}}
 
 {{/*
+Name of the plugin cache PVC runner Jobs mount.
+*/}}
+{{- define "doplane.pluginCacheClaimName" -}}
+{{- if .Values.pluginCache.existingClaim -}}
+{{- .Values.pluginCache.existingClaim -}}
+{{- else -}}
+{{- printf "%s-plugin-cache" (include "doplane.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Manager permissions on namespaced resources. Rendered into the manager
+ClusterRole (cluster-wide install) or into a Role per watched namespace
+(namespace-scoped install) — keep both shapes fed from this single list.
+*/}}
+{{- define "doplane.managerNamespacedRules" -}}
+- apiGroups:
+    - ""
+  resources:
+    - events
+  verbs:
+    - create
+    - patch
+- apiGroups:
+    - ""
+  resources:
+    - pods
+  verbs:
+    - get
+    - list
+    - watch
+- apiGroups:
+    - ""
+  resources:
+    - pods/log
+  verbs:
+    - get
+- apiGroups:
+    - ""
+  resources:
+    - secrets
+  verbs:
+    - get
+- apiGroups:
+    - batch
+  resources:
+    - jobs
+  verbs:
+    - create
+    - delete
+    - get
+    - list
+    - watch
+- apiGroups:
+    - do.pulumi.com
+  resources:
+    - docomposites/status
+    - doresources/status
+  verbs:
+    - get
+    - patch
+    - update
+- apiGroups:
+    - do.pulumi.com
+  resources:
+    - docomposites
+    - doresources
+  verbs:
+    - create
+    - delete
+    - get
+    - list
+    - patch
+    - update
+    - watch
+- apiGroups:
+    - do.pulumi.com
+  resources:
+    - docomposites/finalizers
+    - doresources/finalizers
+  verbs:
+    - update
+{{- end -}}
+
+{{/*
+Manager permissions on cluster-scoped resources (DoCompositeDefinition) —
+required in both install shapes.
+*/}}
+{{- define "doplane.managerClusterRules" -}}
+- apiGroups:
+    - do.pulumi.com
+  resources:
+    - docompositedefinitions
+    - doproviders
+  verbs:
+    - get
+    - list
+    - watch
+- apiGroups:
+    - do.pulumi.com
+  resources:
+    - docompositedefinitions/status
+    - doproviders/status
+  verbs:
+    - get
+    - patch
+    - update
+{{- end -}}
+
+{{/*
 Build an image reference from fullName, repository, tag, and digest fields.
 */}}
 {{- define "doplane.imageRef" -}}

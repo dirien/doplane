@@ -1,0 +1,21 @@
+# Optional overlay enabling the shared writable plugin cache: runner Jobs
+# mount a PVC and install pinned provider plugins there on first use, so new
+# providers need YAML changes only — no runner image rebuild.
+#
+#   bin/kustomize build deploy/kustomize/plugin-cache | kubectl apply -f -
+#
+# (applies the whole default tree plus the PVC and manager env). Name prefix
+# and namespace are already applied by ../default, so resources and patch
+# targets here use final names.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- ../default
+- pvc.yaml
+
+patches:
+- path: manager_plugin_cache_patch.yaml
+  target:
+    kind: Deployment
+    name: doplane-controller-manager

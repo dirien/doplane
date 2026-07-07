@@ -1,0 +1,15 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doplane-controller-manager
+  namespace: doplane-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: manager
+          env:
+            - name: PLUGIN_CACHE_PVC
+              value: doplane-plugin-cache
+            - name: PLUGIN_CACHE_MOUNT_PATH
+              value: /var/lib/doplane/pulumi-home

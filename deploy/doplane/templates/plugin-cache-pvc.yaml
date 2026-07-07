@@ -1,0 +1,18 @@
+{{- if and .Values.pluginCache.enabled .Values.pluginCache.create (not .Values.pluginCache.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "doplane.pluginCacheClaimName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "doplane.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.pluginCache.accessModes | nindent 4 }}
+  {{- with .Values.pluginCache.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.pluginCache.size }}
+{{- end }}

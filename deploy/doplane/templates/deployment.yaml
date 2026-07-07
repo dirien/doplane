@@ -49,6 +49,18 @@ spec:
                   fieldPath: metadata.namespace
             - name: RUNNER_IMAGE
               value: {{ include "doplane.runnerImage" . | quote }}
+            - name: RUNNER_NAMESPACE_MODE
+              value: {{ .Values.runner.namespaceMode | quote }}
+            {{- with .Values.watchNamespaces }}
+            - name: WATCH_NAMESPACES
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- if .Values.pluginCache.enabled }}
+            - name: PLUGIN_CACHE_PVC
+              value: {{ include "doplane.pluginCacheClaimName" . | quote }}
+            - name: PLUGIN_CACHE_MOUNT_PATH
+              value: {{ .Values.pluginCache.mountPath | quote }}
+            {{- end }}
             {{- with .Values.manager.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

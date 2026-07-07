@@ -7,6 +7,41 @@
 {{- $metricsAuthRoleName := printf "%s-metrics-auth-role" $fullname | trunc 63 | trimSuffix "-" -}}
 {{- $metricsAuthRoleBindingName := printf "%s-metrics-auth-rolebinding" $fullname | trunc 63 | trimSuffix "-" -}}
 {{- $metricsReaderName := printf "%s-metrics-reader" $fullname | trunc 63 | trimSuffix "-" -}}
+{{- if .Values.watchNamespaces }}
+{{/*
+Namespace-scoped install: namespaced permissions become Roles in every
+watched namespace plus the release namespace (runner Jobs in "operator"
+namespace mode run there); only the cluster-scoped DoCompositeDefinition
+rules stay in a ClusterRole.
+*/}}
+{{- range $ns := (concat .Values.watchNamespaces (list .Release.Namespace) | uniq) }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $managerRoleName }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "doplane.labels" $ | nindent 4 }}
+rules:
+  {{- include "doplane.managerNamespacedRules" $ | nindent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $managerRoleBindingName }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "doplane.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $managerRoleName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "doplane.serviceAccountName" $ }}
+    namespace: {{ $.Release.Namespace }}
+---
+{{- end }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -14,75 +49,18 @@ metadata:
   labels:
     {{- include "doplane.labels" . | nindent 4 }}
 rules:
-  - apiGroups:
-      - ""
-    resources:
-      - events
-    verbs:
-      - create
-      - patch
-  - apiGroups:
-      - ""
-    resources:
-      - pods
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - ""
-    resources:
-      - pods/log
-    verbs:
-      - get
-  - apiGroups:
-      - batch
-    resources:
-      - jobs
-    verbs:
-      - create
-      - delete
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - do.pulumi.com
-    resources:
-      - docompositedefinitions
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - do.pulumi.com
-    resources:
-      - docompositedefinitions/status
-      - docomposites/status
-      - doresources/status
-    verbs:
-      - get
-      - patch
-      - update
-  - apiGroups:
-      - do.pulumi.com
-    resources:
-      - docomposites
-      - doresources
-    verbs:
-      - create
-      - delete
-      - get
-      - list
-      - patch
-      - update
-      - watch
-  - apiGroups:
-      - do.pulumi.com
-    resources:
-      - docomposites/finalizers
-      - doresources/finalizers
-    verbs:
-      - update
+  {{- include "doplane.managerClusterRules" . | nindent 2 }}
+{{- else }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $managerRoleName }}
+  labels:
+    {{- include "doplane.labels" . | nindent 4 }}
+rules:
+  {{- include "doplane.managerNamespacedRules" . | nindent 2 }}
+  {{- include "doplane.managerClusterRules" . | nindent 2 }}
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

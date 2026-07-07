@@ -23,6 +23,44 @@ runnerImage:
   # -- Runner image digest. Takes precedence over tag when set.
   digest: ""
 
+# -- Namespaces the operator reconciles (namespace-scoped deployment).
+# Empty watches the whole cluster. When set, manager RBAC shrinks to
+# per-namespace Roles in these namespaces (plus the release namespace for
+# runner Jobs, and a minimal ClusterRole for the cluster-scoped
+# DoCompositeDefinitions).
+watchNamespaces: []
+
+runner:
+  # -- Where runner Jobs execute: "operator" runs every Job in the release
+  # namespace using its shared provider-credentials Secret; "resource" runs
+  # each Job in the owning DoResource's namespace and resolves that
+  # namespace's provider-credentials Secret — per-tenant cloud credentials.
+  namespaceMode: operator
+
+pluginCache:
+  # -- Enable the shared writable plugin cache: runner Jobs mount a PVC and
+  # install pinned provider plugins there on first use, so new providers
+  # need YAML changes only — no runner image rebuild. Jobs running outside
+  # the release namespace (runner.namespaceMode=resource) skip the cache,
+  # since PVC references are namespace-local.
+  enabled: false
+  # -- Create the PersistentVolumeClaim. Set false to manage it yourself.
+  create: true
+  # -- Use an existing claim instead of creating one.
+  existingClaim: ""
+  # -- StorageClass of the created claim. Empty uses the cluster default.
+  # ReadWriteMany-capable storage lets runner Jobs on different nodes share
+  # one cache.
+  storageClassName: ""
+  # -- Access modes of the created claim.
+  accessModes:
+    - ReadWriteMany
+  # -- Size of the created claim; provider archives can be large.
+  size: 5Gi
+  # -- Where runner pods mount the cache (becomes the runner's PULUMI_HOME
+  # plugin source).
+  mountPath: /var/lib/doplane/pulumi-home
+
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
