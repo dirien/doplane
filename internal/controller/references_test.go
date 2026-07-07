@@ -30,8 +30,8 @@ import (
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	dov1alpha1 "github.com/dirien/pulumi-do-operator/api/v1alpha1"
-	"github.com/dirien/pulumi-do-operator/internal/pulumido"
+	dov1alpha1 "github.com/dirien/doplane/api/v1alpha1"
+	"github.com/dirien/doplane/internal/pulumido"
 )
 
 var _ = Describe("DoResource reference graph", func() {

@@ -37,16 +37,16 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/ptr"
 
-	"github.com/dirien/pulumi-do-operator/internal/runnerops"
+	"github.com/dirien/doplane/internal/runnerops"
 )
 
 const (
 	labelManagedBy = "app.kubernetes.io/managed-by"
 	labelVerb      = "do.pulumi.com/verb"
-	operatorName   = "pulumi-do-operator"
+	operatorName   = "doplane"
 
 	// bakedPluginsDir is where the runner image keeps its pre-installed
-	// plugins; the pdo-runner binary seeds them into each workspace.
+	// plugins; the doplane-runner binary seeds them into each workspace.
 	bakedPluginsDir = "/opt/pulumi-home/plugins"
 )
 
@@ -68,7 +68,7 @@ func ownerFromContext(ctx context.Context) string {
 }
 
 // JobRunner ships every operation to a dedicated, hardened Kubernetes Job
-// running the pdo-runner binary, so provider plugins execute in their own
+// running the doplane-runner binary, so provider plugins execute in their own
 // container with their own resource limits and credentials, isolated from
 // the controller manager. The operation travels as one JSON document; the
 // outcome comes back as one typed envelope in the pod log.
@@ -76,7 +76,7 @@ type JobRunner struct {
 	Clientset kubernetes.Interface
 	// Namespace is where runner Jobs are created (the operator namespace).
 	Namespace string
-	// Image is the runner image containing the pdo-runner binary, the
+	// Image is the runner image containing the doplane-runner binary, the
 	// pulumi CLI, language toolchains and baked provider plugins.
 	Image string
 	// CredentialsSecret is an optional Secret whose keys become environment
@@ -255,7 +255,7 @@ func (r *JobRunner) executeOp(ctx context.Context, op runnerops.Op) (runnerops.R
 
 	logs, logsErr := r.podLogs(name)
 	if failed {
-		// The pdo-runner binary exits non-zero only for infrastructure
+		// The doplane-runner binary exits non-zero only for infrastructure
 		// problems (op failures travel in the envelope), so a failed Job is
 		// an infra failure. Classify only as a safety net.
 		cleanup = true
@@ -323,8 +323,8 @@ func (r *JobRunner) podLogs(jobName string) (string, error) {
 
 func (r *JobRunner) buildJob(name, verb, opJSON string) *batchv1.Job {
 	env := []corev1.EnvVar{
-		{Name: "PDO_OP", Value: opJSON},
-		{Name: "PDO_BAKED_PLUGINS", Value: bakedPluginsDir},
+		{Name: "DOPLANE_OP", Value: opJSON},
+		{Name: "DOPLANE_BAKED_PLUGINS", Value: bakedPluginsDir},
 		{Name: "PULUMI_SKIP_UPDATE_CHECK", Value: "true"},
 	}
 	var envFrom []corev1.EnvFromSource
@@ -366,9 +366,9 @@ func (r *JobRunner) buildJob(name, verb, opJSON string) *batchv1.Job {
 						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 					},
 					Containers: []corev1.Container{{
-						Name:    "pulumi-do",
+						Name:    "doplane",
 						Image:   r.Image,
-						Command: []string{"/pdo-runner"},
+						Command: []string{"/doplane-runner"},
 						Env:     env,
 						EnvFrom: envFrom,
 						SecurityContext: &corev1.SecurityContext{

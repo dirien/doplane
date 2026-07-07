@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "pulumi-do-operator.controllerManagerName" . }}
+  name: {{ include "doplane.controllerManagerName" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "pulumi-do-operator.labels" . | nindent 4 }}
+    {{- include "doplane.labels" . | nindent 4 }}
     app.kubernetes.io/component: manager
     control-plane: controller-manager
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "pulumi-do-operator.managerSelectorLabels" . | nindent 6 }}
+      {{- include "doplane.managerSelectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "pulumi-do-operator.managerSelectorLabels" . | nindent 8 }}
+        {{- include "doplane.managerSelectorLabels" . | nindent 8 }}
         {{- with .Values.manager.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -24,7 +24,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      serviceAccountName: {{ include "pulumi-do-operator.serviceAccountName" . }}
+      serviceAccountName: {{ include "doplane.serviceAccountName" . }}
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -36,7 +36,7 @@ spec:
       {{- end }}
       containers:
         - name: manager
-          image: {{ include "pulumi-do-operator.managerImage" . | quote }}
+          image: {{ include "doplane.managerImage" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command:
             {{- toYaml .Values.manager.command | nindent 12 }}
@@ -48,7 +48,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
             - name: RUNNER_IMAGE
-              value: {{ include "pulumi-do-operator.runnerImage" . | quote }}
+              value: {{ include "doplane.runnerImage" . | quote }}
             {{- with .Values.manager.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

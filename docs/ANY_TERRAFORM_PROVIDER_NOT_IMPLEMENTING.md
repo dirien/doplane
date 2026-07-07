@@ -1,7 +1,7 @@
 # Any Terraform Provider: Not Implementing Now
 
 Decision: do not implement first-class Any Terraform Provider support in
-`pulumi-do-operator` yet.
+`doplane` yet.
 
 Reason: live tests showed that `pulumi do --stateless delete` returned success
 for parameterized Terraform providers while leaving the remote resource in
@@ -111,13 +111,13 @@ pulumi do digitalocean:index/tag:Tag \
 Observed result:
 
 ```text
-dry-run ok tag=pdo-anyprovider-tag-1783438881
-created DigitalOcean tag=pdo-anyprovider-tag-1783438881
-api confirmed tag=pdo-anyprovider-tag-1783438881 total_resources=0
+dry-run ok tag=doplane-anyprovider-tag-1783438881
+created DigitalOcean tag=doplane-anyprovider-tag-1783438881
+api confirmed tag=doplane-anyprovider-tag-1783438881 total_resources=0
 pulumi delete output:
-This will delete digitalocean:index/tag:Tag "pdo-anyprovider-tag-1783438881".
-tag remained after pulumi delete: pdo-anyprovider-tag-1783438881
-api cleanup exit=0 tag=pdo-anyprovider-tag-1783438881
+This will delete digitalocean:index/tag:Tag "doplane-anyprovider-tag-1783438881".
+tag remained after pulumi delete: doplane-anyprovider-tag-1783438881
+api cleanup exit=0 tag=doplane-anyprovider-tag-1783438881
 ```
 
 Native Pulumi DigitalOcean provider, same resource:
@@ -135,10 +135,10 @@ pulumi do digitalocean:index/tag:Tag \
 Observed result:
 
 ```text
-created native DigitalOcean tag=pdo-native-tag-1783438907
-api confirmed tag=pdo-native-tag-1783438907 total_resources=0
+created native DigitalOcean tag=doplane-native-tag-1783438907
+api confirmed tag=doplane-native-tag-1783438907 total_resources=0
 native pulumi delete output:
-This will delete digitalocean:index/tag:Tag "pdo-native-tag-1783438907".
+This will delete digitalocean:index/tag:Tag "doplane-native-tag-1783438907".
 native tag absent after pulumi delete
 ```
 
@@ -167,11 +167,11 @@ pulumi do aws:iam/policy:Policy \
 Observed result:
 
 ```text
-dry-run ok policy=pdo-native-iam-policy-1783440048
-created IAM policy name=pdo-native-iam-policy-1783440048 arn=arn:aws:iam::052848974346:policy/pdo-native-iam-policy-1783440048
+dry-run ok policy=doplane-native-iam-policy-1783440048
+created IAM policy name=doplane-native-iam-policy-1783440048 arn=arn:aws:iam::052848974346:policy/doplane-native-iam-policy-1783440048
 aws api confirmed policy exists
 pulumi delete output:
-This will delete aws:iam/policy:Policy "arn:aws:iam::052848974346:policy/pdo-native-iam-policy-1783440048".
+This will delete aws:iam/policy:Policy "arn:aws:iam::052848974346:policy/doplane-native-iam-policy-1783440048".
 policy absent after pulumi delete
 ```
 
@@ -190,13 +190,13 @@ pulumi do aws:index/iamPolicy:IamPolicy \
 Observed result:
 
 ```text
-dry-run ok policy=pdo-anytf-iam-policy-1783440253
-created AnyTF IAM policy name=pdo-anytf-iam-policy-1783440253 arn=arn:aws:iam::052848974346:policy/pdo-anytf-iam-policy-1783440253
+dry-run ok policy=doplane-anytf-iam-policy-1783440253
+created AnyTF IAM policy name=doplane-anytf-iam-policy-1783440253 arn=arn:aws:iam::052848974346:policy/doplane-anytf-iam-policy-1783440253
 aws api confirmed policy exists
 pulumi delete output:
-This will delete aws:index/iamPolicy:IamPolicy "arn:aws:iam::052848974346:policy/pdo-anytf-iam-policy-1783440253".
-policy remained after pulumi delete arn=arn:aws:iam::052848974346:policy/pdo-anytf-iam-policy-1783440253
-aws api cleanup exit=0 arn=arn:aws:iam::052848974346:policy/pdo-anytf-iam-policy-1783440253
+This will delete aws:index/iamPolicy:IamPolicy "arn:aws:iam::052848974346:policy/doplane-anytf-iam-policy-1783440253".
+policy remained after pulumi delete arn=arn:aws:iam::052848974346:policy/doplane-anytf-iam-policy-1783440253
+aws api cleanup exit=0 arn=arn:aws:iam::052848974346:policy/doplane-anytf-iam-policy-1783440253
 ```
 
 This confirms the native tfbridge AWS provider works, while Terraform AWS

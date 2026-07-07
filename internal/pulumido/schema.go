@@ -23,7 +23,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/dirien/pulumi-do-operator/internal/runnerops"
+	"github.com/dirien/doplane/internal/runnerops"
 )
 
 // PropertySchema is the subset of a Pulumi schema property definition needed

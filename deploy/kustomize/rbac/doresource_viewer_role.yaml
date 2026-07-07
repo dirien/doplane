@@ -1,4 +1,4 @@
-# This rule is not used by the project pulumi-do-operator itself.
+# This rule is not used by the project doplane itself.
 # It is provided to allow the cluster admin to help manage permissions for users.
 #
 # Grants read-only access to do.pulumi.com resources.
@@ -9,7 +9,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   labels:
-    app.kubernetes.io/name: pulumi-do-operator
+    app.kubernetes.io/name: doplane
     app.kubernetes.io/managed-by: kustomize
   name: doresource-viewer-role
 rules:

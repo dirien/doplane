@@ -6,7 +6,7 @@
 # The runner resolves `private/ediri/web-app` through the registry API
 # (PULUMI_ACCESS_TOKEN required in the provider-credentials Secret) to its
 # git source, compiles it on first use, and constructs it. The component
-# (source: github.com/dirien/pdo-components) deploys a Deployment and a
+# (source: github.com/dirien/doplane-components) deploys a Deployment and a
 # ClusterIP Service into the cluster referenced by KUBECONFIG_CONTENT —
 # kind-friendly, no cloud account needed.
 #

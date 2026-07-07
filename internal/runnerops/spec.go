@@ -18,7 +18,7 @@ limitations under the License.
 // Pulumi — stateless `pulumi do` CRUD, registry schema fetches and
 // ephemeral-engine component orchestration — as plain, typed Go. The manager
 // runs it in-process in dev mode (ExecRunner); runner Jobs run the same code
-// through the pdo-runner binary. The operation spec travels as one JSON
+// through the doplane-runner binary. The operation spec travels as one JSON
 // document and the outcome comes back as one JSON envelope with a typed
 // failure code: no shell, no log scraping.
 package runnerops
@@ -55,7 +55,7 @@ const (
 )
 
 // Op is the single JSON document describing one operation. It reaches the
-// pdo-runner binary via the PDO_OP environment variable.
+// doplane-runner binary via the DOPLANE_OP environment variable.
 type Op struct {
 	Verb        string          `json:"verb"`
 	Token       string          `json:"token,omitempty"`

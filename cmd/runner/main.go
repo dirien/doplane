@@ -14,8 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// pdo-runner executes exactly one pulumi-do-operator operation inside a
-// runner Job pod. The operation arrives as JSON in the PDO_OP environment
+// doplane-runner executes exactly one doplane operation inside a
+// runner Job pod. The operation arrives as JSON in the DOPLANE_OP environment
 // variable; the outcome leaves as a single JSON envelope on stdout (all
 // pulumi progress goes to stderr). The process exits 0 whenever it reached a
 // decision — operation failures travel in-band with a typed code — so a
@@ -30,7 +30,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/dirien/pulumi-do-operator/internal/runnerops"
+	"github.com/dirien/doplane/internal/runnerops"
 )
 
 func main() {
@@ -41,19 +41,19 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	raw := os.Getenv("PDO_OP")
+	raw := os.Getenv("DOPLANE_OP")
 	if raw == "" {
-		fmt.Fprintln(os.Stderr, "PDO_OP environment variable is required")
+		fmt.Fprintln(os.Stderr, "DOPLANE_OP environment variable is required")
 		return 3
 	}
 	var op runnerops.Op
 	if err := json.Unmarshal([]byte(raw), &op); err != nil {
-		fmt.Fprintf(os.Stderr, "invalid PDO_OP: %v\n", err)
+		fmt.Fprintf(os.Stderr, "invalid DOPLANE_OP: %v\n", err)
 		return 3
 	}
 
 	runner := &runnerops.Runner{
-		BakedPlugins: os.Getenv("PDO_BAKED_PLUGINS"),
+		BakedPlugins: os.Getenv("DOPLANE_BAKED_PLUGINS"),
 		Progress:     os.Stderr,
 	}
 	result := runner.Execute(ctx, op)

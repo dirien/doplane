@@ -31,8 +31,8 @@ import (
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	dov1alpha1 "github.com/dirien/pulumi-do-operator/api/v1alpha1"
-	"github.com/dirien/pulumi-do-operator/internal/pulumido"
+	dov1alpha1 "github.com/dirien/doplane/api/v1alpha1"
+	"github.com/dirien/doplane/internal/pulumido"
 )
 
 // fakeRunner implements pulumido.Runner in memory.
@@ -51,7 +51,7 @@ type fakeRunner struct {
 
 func (f *fakeRunner) CreateComponent(_ context.Context, token, _ string, props map[string]any) (string, map[string]any, []byte, error) {
 	f.componentCreates = append(f.componentCreates, props)
-	return "urn:pulumi:dev::pdo::" + token + "::res",
+	return "urn:pulumi:dev::doplane::" + token + "::res",
 		map[string]any{"endpoint": "svc.local:8080"},
 		[]byte(`{"version":3,"deployment":{"resources":[]}}`), nil
 }
@@ -146,7 +146,7 @@ var _ = Describe("DoResource Controller", func() {
 					Spec: dov1alpha1.DoResourceSpec{
 						Type: token,
 						Properties: &apiextensionsv1.JSON{
-							Raw: []byte(`{"length": 3, "prefix": "pdo"}`),
+							Raw: []byte(`{"length": 3, "prefix": "doplane"}`),
 						},
 					},
 				}

@@ -58,7 +58,7 @@ func prepare(root, bakedPlugins string) (*workspace, error) {
 	// The file backend needs an identity for stack metadata; non-root
 	// container users often have no passwd entry.
 	if os.Getenv("USER") == "" {
-		env = append(env, "USER=pulumi-do")
+		env = append(env, "USER=doplane")
 	}
 	// Components that target Kubernetes receive their kubeconfig as Secret
 	// content; materialize it as a file.

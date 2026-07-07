@@ -21,7 +21,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/dirien/pulumi-do-operator/internal/runnerops"
+	"github.com/dirien/doplane/internal/runnerops"
 )
 
 // ExecRunner executes runner operations in-process with a local pulumi

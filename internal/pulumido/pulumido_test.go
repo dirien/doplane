@@ -20,7 +20,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/dirien/pulumi-do-operator/internal/runnerops"
+	"github.com/dirien/doplane/internal/runnerops"
 )
 
 func TestResultErr(t *testing.T) {
@@ -53,12 +53,12 @@ func TestResultErr(t *testing.T) {
 
 func TestDecodeEnvelope(t *testing.T) {
 	out := "Downloading provider\nsome progress\n" +
-		`{"ok":true,"id":"urn:pulumi:dev::pdo::t::res","outputs":{"dns":"svc:8080"},"engineState":{"version":3}}` + "\n"
+		`{"ok":true,"id":"urn:pulumi:dev::doplane::t::res","outputs":{"dns":"svc:8080"},"engineState":{"version":3}}` + "\n"
 	res, err := decodeEnvelope(out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.OK || res.ID != "urn:pulumi:dev::pdo::t::res" || res.Outputs["dns"] != "svc:8080" {
+	if !res.OK || res.ID != "urn:pulumi:dev::doplane::t::res" || res.Outputs["dns"] != "svc:8080" {
 		t.Errorf("envelope: %+v", res)
 	}
 

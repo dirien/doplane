@@ -1,5 +1,5 @@
 {{- if .Values.rbac.create }}
-{{- $fullname := include "pulumi-do-operator.fullname" . -}}
+{{- $fullname := include "doplane.fullname" . -}}
 {{- $managerRoleName := printf "%s-manager-role" $fullname | trunc 63 | trimSuffix "-" -}}
 {{- $managerRoleBindingName := printf "%s-manager-rolebinding" $fullname | trunc 63 | trimSuffix "-" -}}
 {{- $leaderElectionRoleName := printf "%s-leader-election-role" $fullname | trunc 63 | trimSuffix "-" -}}
@@ -12,7 +12,7 @@ kind: ClusterRole
 metadata:
   name: {{ $managerRoleName }}
   labels:
-    {{- include "pulumi-do-operator.labels" . | nindent 4 }}
+    {{- include "doplane.labels" . | nindent 4 }}
 rules:
   - apiGroups:
       - ""
@@ -89,14 +89,14 @@ kind: ClusterRoleBinding
 metadata:
   name: {{ $managerRoleBindingName }}
   labels:
-    {{- include "pulumi-do-operator.labels" . | nindent 4 }}
+    {{- include "doplane.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: {{ $managerRoleName }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "pulumi-do-operator.serviceAccountName" . }}
+    name: {{ include "doplane.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -105,7 +105,7 @@ metadata:
   name: {{ $leaderElectionRoleName }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "pulumi-do-operator.labels" . | nindent 4 }}
+    {{- include "doplane.labels" . | nindent 4 }}
 rules:
   - apiGroups:
       - ""
@@ -145,14 +145,14 @@ metadata:
   name: {{ $leaderElectionRoleBindingName }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "pulumi-do-operator.labels" . | nindent 4 }}
+    {{- include "doplane.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: {{ $leaderElectionRoleName }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "pulumi-do-operator.serviceAccountName" . }}
+    name: {{ include "doplane.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -160,7 +160,7 @@ kind: ClusterRole
 metadata:
   name: {{ $metricsAuthRoleName }}
   labels:
-    {{- include "pulumi-do-operator.labels" . | nindent 4 }}
+    {{- include "doplane.labels" . | nindent 4 }}
 rules:
   - apiGroups:
       - authentication.k8s.io
@@ -180,14 +180,14 @@ kind: ClusterRoleBinding
 metadata:
   name: {{ $metricsAuthRoleBindingName }}
   labels:
-    {{- include "pulumi-do-operator.labels" . | nindent 4 }}
+    {{- include "doplane.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: {{ $metricsAuthRoleName }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "pulumi-do-operator.serviceAccountName" . }}
+    name: {{ include "doplane.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -195,7 +195,7 @@ kind: ClusterRole
 metadata:
   name: {{ $metricsReaderName }}
   labels:
-    {{- include "pulumi-do-operator.labels" . | nindent 4 }}
+    {{- include "doplane.labels" . | nindent 4 }}
 rules:
   - nonResourceURLs:
       - /metrics
@@ -208,7 +208,7 @@ kind: ClusterRole
 metadata:
   name: {{ printf "%s-doresource-admin-role" $fullname | trunc 63 | trimSuffix "-" }}
   labels:
-    {{- include "pulumi-do-operator.labels" . | nindent 4 }}
+    {{- include "doplane.labels" . | nindent 4 }}
 rules:
   - apiGroups:
       - do.pulumi.com
@@ -228,7 +228,7 @@ kind: ClusterRole
 metadata:
   name: {{ printf "%s-doresource-editor-role" $fullname | trunc 63 | trimSuffix "-" }}
   labels:
-    {{- include "pulumi-do-operator.labels" . | nindent 4 }}
+    {{- include "doplane.labels" . | nindent 4 }}
 rules:
   - apiGroups:
       - do.pulumi.com
@@ -254,7 +254,7 @@ kind: ClusterRole
 metadata:
   name: {{ printf "%s-doresource-viewer-role" $fullname | trunc 63 | trimSuffix "-" }}
   labels:
-    {{- include "pulumi-do-operator.labels" . | nindent 4 }}
+    {{- include "doplane.labels" . | nindent 4 }}
 rules:
   - apiGroups:
       - do.pulumi.com

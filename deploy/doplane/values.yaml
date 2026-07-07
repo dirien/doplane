@@ -17,7 +17,7 @@ runnerImage:
   # -- Full runner image reference passed to RUNNER_IMAGE. When set, repository/tag/digest are ignored.
   fullName: ""
   # -- Runner image repository.
-  repository: pulumi-do-runner
+  repository: doplane-runner
   # -- Runner image tag.
   tag: dev
   # -- Runner image digest. Takes precedence over tag when set.

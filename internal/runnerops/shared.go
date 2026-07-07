@@ -99,7 +99,7 @@ func engineProgram(token string, props map[string]any) (string, error) {
 		props = map[string]any{}
 	}
 	program := map[string]any{
-		"name":    "pdo",
+		"name":    "doplane",
 		"runtime": "yaml",
 		"resources": map[string]any{
 			"res": map[string]any{

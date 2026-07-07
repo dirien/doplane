@@ -2,10 +2,10 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ include "pulumi-do-operator.metricsMonitorName" . }}
+  name: {{ include "doplane.metricsMonitorName" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "pulumi-do-operator.labels" . | nindent 4 }}
+    {{- include "doplane.labels" . | nindent 4 }}
     app.kubernetes.io/component: metrics
     control-plane: controller-manager
     {{- with .Values.metrics.serviceMonitor.labels }}
@@ -41,5 +41,5 @@ spec:
       {{- end }}
   selector:
     matchLabels:
-      {{- include "pulumi-do-operator.managerSelectorLabels" . | nindent 6 }}
+      {{- include "doplane.managerSelectorLabels" . | nindent 6 }}
 {{- end }}

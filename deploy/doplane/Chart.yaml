@@ -1,12 +1,12 @@
 apiVersion: v2
-name: pulumi-do-operator
+name: doplane
 description: A Helm chart for the Pulumi Do operator
 type: application
 version: 0.1.0
 appVersion: 0.0.1
-home: https://github.com/dirien/pulumi-do-operator
+home: https://github.com/dirien/doplane
 sources:
-  - https://github.com/dirien/pulumi-do-operator
+  - https://github.com/dirien/doplane
 maintainers:
   - name: dirien
     email: engin.diri@ediri.de
@@ -21,4 +21,4 @@ annotations:
     - name: manager
       image: controller:latest
     - name: runner
-      image: pulumi-do-runner:dev
+      image: doplane-runner:dev

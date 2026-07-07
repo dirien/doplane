@@ -28,8 +28,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	dov1alpha1 "github.com/dirien/pulumi-do-operator/api/v1alpha1"
-	"github.com/dirien/pulumi-do-operator/internal/pulumido"
+	dov1alpha1 "github.com/dirien/doplane/api/v1alpha1"
+	"github.com/dirien/doplane/internal/pulumido"
 )
 
 // resolveReferences resolves spec.references into props (mutating it).
@@ -69,7 +69,7 @@ func (r *DoResourceReconciler) resolveReferences(ctx context.Context, res *dov1a
 // expandTemplate substitutes rendered into every "${value}" placeholder.
 // "$${value}" is an escape producing a literal "${value}".
 func expandTemplate(tpl, rendered string) string {
-	const literalMark = "\x00PDO_LITERAL\x00"
+	const literalMark = "\x00DOPLANE_LITERAL\x00"
 	out := strings.ReplaceAll(tpl, "$${value}", literalMark)
 	out = strings.ReplaceAll(out, "${value}", rendered)
 	return strings.ReplaceAll(out, literalMark, "${value}")

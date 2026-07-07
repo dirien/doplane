@@ -39,9 +39,9 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	dov1alpha1 "github.com/dirien/pulumi-do-operator/api/v1alpha1"
-	"github.com/dirien/pulumi-do-operator/internal/controller"
-	"github.com/dirien/pulumi-do-operator/internal/pulumido"
+	dov1alpha1 "github.com/dirien/doplane/api/v1alpha1"
+	"github.com/dirien/doplane/internal/controller"
+	"github.com/dirien/doplane/internal/pulumido"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -268,7 +268,7 @@ func main() {
 		Client:   mgr.GetClient(),
 		Live:     mgr.GetAPIReader(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("pulumi-do-operator"),
+		Recorder: mgr.GetEventRecorderFor("doplane"),
 		Runner:   runner,
 		Schemas:  pulumido.NewSchemaCache(runner),
 	}).SetupWithManager(mgr); err != nil {
@@ -279,7 +279,7 @@ func main() {
 		Client:   mgr.GetClient(),
 		Live:     mgr.GetAPIReader(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("pulumi-do-operator"),
+		Recorder: mgr.GetEventRecorderFor("doplane"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DoComposite")
 		os.Exit(1)

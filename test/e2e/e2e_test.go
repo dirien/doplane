@@ -27,20 +27,20 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/dirien/pulumi-do-operator/test/utils"
+	"github.com/dirien/doplane/test/utils"
 )
 
 // namespace where the project is deployed in
-const namespace = "pulumi-do-operator-system"
+const namespace = "doplane-system"
 
 // serviceAccountName created for the project
-const serviceAccountName = "pulumi-do-operator-controller-manager"
+const serviceAccountName = "doplane-controller-manager"
 
 // metricsServiceName is the name of the metrics service of the project
-const metricsServiceName = "pulumi-do-operator-controller-manager-metrics-service"
+const metricsServiceName = "doplane-controller-manager-metrics-service"
 
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
-const metricsRoleBindingName = "pulumi-do-operator-metrics-binding"
+const metricsRoleBindingName = "doplane-metrics-binding"
 
 var _ = Describe("Manager", Ordered, func() {
 	var controllerPodName string
@@ -173,7 +173,7 @@ var _ = Describe("Manager", Ordered, func() {
 		It("should ensure the metrics endpoint is serving metrics", func() {
 			By("creating a ClusterRoleBinding for the service account to allow access to metrics")
 			cmd := exec.Command("kubectl", "create", "clusterrolebinding", metricsRoleBindingName,
-				"--clusterrole=pulumi-do-operator-metrics-reader",
+				"--clusterrole=doplane-metrics-reader",
 				fmt.Sprintf("--serviceaccount=%s:%s", namespace, serviceAccountName),
 			)
 			_, err := utils.Run(cmd)

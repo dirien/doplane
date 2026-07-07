@@ -25,8 +25,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 
-	dov1alpha1 "github.com/dirien/pulumi-do-operator/api/v1alpha1"
-	"github.com/dirien/pulumi-do-operator/internal/pulumido"
+	dov1alpha1 "github.com/dirien/doplane/api/v1alpha1"
+	"github.com/dirien/doplane/internal/pulumido"
 )
 
 func jsonRaw(t *testing.T, v any) *apiextensionsv1.JSON {

@@ -6,7 +6,7 @@
 ## Overview
 Two parallel delivery mechanisms that must stay equivalent:
 - `kustomize/` — kubebuilder-style tree (`make install` / `make deploy`)
-- `pulumi-do-operator/` — Helm chart (`make helm-lint` / `helm-template` / `helm-package`)
+- `doplane/` — Helm chart (`make helm-lint` / `helm-template` / `helm-package`)
 <!-- AGENTS-GENERATED:END overview -->
 
 <!-- AGENTS-GENERATED:START structure -->
@@ -21,7 +21,7 @@ deploy/
                          (dependency of deploy/build-installer)
     default/           → top-level kustomization
     samples/           → CR samples (pin package versions to Dockerfile.runner ARGs)
-  pulumi-do-operator/
+  doplane/
     crds/              → SYNCED from kustomize CRDs by `make sync-helm-crds`
                          (do not hand-edit)
     templates/         → Helm templates
@@ -47,7 +47,7 @@ deploy/
 
 ## Setup & environment
 - Tools arrive via the Makefile (`bin/kustomize`, controller-gen); Helm from PATH
-- Cluster for local testing: kind (`kind create cluster --name pdo`)
+- Cluster for local testing: kind (`kind create cluster --name doplane`)
 
 ## Build & tests
 - Render checks: `make helm-lint`, `make helm-template`, `bin/kustomize build deploy/kustomize/default`

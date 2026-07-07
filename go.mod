@@ -1,4 +1,4 @@
-module github.com/dirien/pulumi-do-operator
+module github.com/dirien/doplane
 
 go 1.24.0
 

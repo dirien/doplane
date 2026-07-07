@@ -61,7 +61,7 @@ func (r *Runner) progress() io.Writer {
 // (workspace setup) come back as errors; operation outcomes — success or
 // failure — come back in the Result.
 func (r *Runner) Execute(ctx context.Context, op Op) Result {
-	work, err := os.MkdirTemp("", "pdo-op-*")
+	work, err := os.MkdirTemp("", "doplane-op-*")
 	if err != nil {
 		return failure(CodeOperationFailed, "creating workspace: %v", err)
 	}

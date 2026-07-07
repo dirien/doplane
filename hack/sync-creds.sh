@@ -12,12 +12,12 @@
 #                          demo-grade: grants runner pods admin on the cluster)
 set -euo pipefail
 
-NS=${NS:-pulumi-do-operator-system}
+NS=${NS:-doplane-system}
 ESC_ENV=${ESC_ENV:-pulumi-idp/auth}
 SECRET=${SECRET:-provider-credentials}
 INCLUDE_PULUMI_TOKEN=${INCLUDE_PULUMI_TOKEN:-0}
 INCLUDE_KIND_KUBECONFIG=${INCLUDE_KIND_KUBECONFIG:-0}
-KIND_CLUSTER=${KIND_CLUSTER:-pdo}
+KIND_CLUSTER=${KIND_CLUSTER:-doplane}
 
 EXTRA_JSON="{}"
 if [ "$INCLUDE_PULUMI_TOKEN" = "1" ]; then

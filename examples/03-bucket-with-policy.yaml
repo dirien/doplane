@@ -11,9 +11,9 @@ spec:
   type: aws:s3/bucketV2:BucketV2
   package: aws@7.34.0
   properties:
-    bucket: pulumi-do-operator-level3
+    bucket: doplane-level3
     tags:
-      managed-by: pulumi-do-operator
+      managed-by: doplane
       level: "3"
 ---
 apiVersion: do.pulumi.com/v1alpha1

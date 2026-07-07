@@ -19,7 +19,7 @@
 | Test one package | `go test -race -count=1 ./internal/pulumido/` | ~5s |
 | Test one spec/func | `go test -race ./internal/controller/ -run TestName` | ~10s |
 | Regenerate CRDs + RBAC + deepcopy (after editing `api/` types or `+kubebuilder:` markers) | `make manifests generate` | ~10s |
-| Build images | `make docker-build docker-build-runner IMG=pulumi-do-operator:dev RUNNER_IMG=pulumi-do-runner:dev` | ~2m |
+| Build images | `make docker-build docker-build-runner IMG=doplane:dev RUNNER_IMG=doplane-runner:dev` | ~2m |
 | Deploy to current cluster | `make install deploy IMG=... RUNNER_IMG=...` | ~30s |
 | Helm chart lint/render | `make helm-lint` / `make helm-template` | ~10s |
 | E2E on kind (creates cluster) | `make test-e2e` | ~10m |

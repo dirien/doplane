@@ -4,7 +4,7 @@ apiVersion: do.pulumi.com/v1alpha1
 kind: DoResource
 metadata:
   labels:
-    app.kubernetes.io/name: pulumi-do-operator
+    app.kubernetes.io/name: doplane
     app.kubernetes.io/managed-by: kustomize
   name: doresource-s3
 spec:
@@ -12,7 +12,7 @@ spec:
   # Pin to the plugin version baked into the runner image.
   package: aws@7.34.0
   properties:
-    bucket: pulumi-do-operator-e2e
+    bucket: doplane-e2e
     tags:
-      managed-by: pulumi-do-operator
+      managed-by: doplane
       purpose: e2e-test

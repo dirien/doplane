@@ -29,15 +29,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 
-	dov1alpha1 "github.com/dirien/pulumi-do-operator/api/v1alpha1"
-	"github.com/dirien/pulumi-do-operator/internal/pulumido"
+	dov1alpha1 "github.com/dirien/doplane/api/v1alpha1"
+	"github.com/dirien/doplane/internal/pulumido"
 )
 
 var exprRe = regexp.MustCompile(`\$\{([^}]*)\}`)
 
 // escMarker temporarily replaces the "$${" escape while expressions are
 // parsed. NUL cannot appear in valid Kubernetes API strings.
-const escMarker = "\x00PDO_ESC\x00"
+const escMarker = "\x00DOPLANE_ESC\x00"
 
 // renderContext carries everything expressions can see.
 type renderContext struct {
@@ -113,7 +113,7 @@ func renderChild(rc *renderContext, tpl *dov1alpha1.CompositeResourceTemplate) (
 			Labels: map[string]string{
 				labelComposite:     compositeLabelValue(rc.composite.Name),
 				labelCompositeItem: tpl.Name,
-				labelManagedByKey:  "pulumi-do-operator",
+				labelManagedByKey:  "doplane",
 			},
 		},
 		Spec: dov1alpha1.DoResourceSpec{
@@ -179,7 +179,7 @@ var removedValue = &struct{ _ byte }{}
 // valueMarker temporarily stands in for the reference "${value}"
 // placeholder while a template is assembled, so literal "${value}" text
 // (from escapes or parameter values) can be distinguished and escaped.
-const valueMarker = "\x00PDO_VALUE\x00"
+const valueMarker = "\x00DOPLANE_VALUE\x00"
 
 // renderString resolves expressions inside one string. params/self resolve
 // immediately; at most one resources.* expression may appear (repeats of

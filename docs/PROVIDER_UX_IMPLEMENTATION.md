@@ -80,12 +80,12 @@ to rebuild the runner image whenever a new provider or plugin version appears.
 Keep the runner root filesystem read-only. Mount only these writable paths:
 
 - `/tmp` as `emptyDir` for input files and the file backend.
-- `/var/lib/pulumi-do/pulumi-home` as the shared plugin cache.
+- `/var/lib/doplane/pulumi-home` as the shared plugin cache.
 
 Set:
 
 ```sh
-PULUMI_HOME=/var/lib/pulumi-do/pulumi-home
+PULUMI_HOME=/var/lib/doplane/pulumi-home
 PULUMI_BACKEND_URL=file:///tmp
 HOME=/tmp
 PULUMI_SKIP_UPDATE_CHECK=true
@@ -109,7 +109,7 @@ pluginCache:
   accessModes:
     - ReadWriteMany
   size: 5Gi
-  mountPath: /var/lib/pulumi-do/pulumi-home
+  mountPath: /var/lib/doplane/pulumi-home
 ```
 
 Use `ReadWriteMany` for the first implementation. It lets concurrent runner
@@ -200,7 +200,7 @@ status:
     version: 4.73.0
   plugin:
     ready: true
-    cachePath: /var/lib/pulumi-do/pulumi-home
+    cachePath: /var/lib/doplane/pulumi-home
   conditions:
     - type: Ready
       status: "True"
@@ -265,7 +265,7 @@ This can start as a developer script and later become a CLI.
 - `internal/controller/`: add `DoProvider` reconciler and provider resolution.
 - `deploy/kustomize/`: add PVC manifests and manager args/env for cache
   settings.
-- `deploy/pulumi-do-operator/`: mirror the PVC settings in Helm values and
+- `deploy/doplane/`: mirror the PVC settings in Helm values and
   templates.
 - `Dockerfile.runner`: keep Pulumi CLI and `jq`; preinstalled plugins become
   optional bootstrap optimizations.

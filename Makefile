@@ -28,8 +28,8 @@ BUNDLE_METADATA_OPTS ?= $(BUNDLE_CHANNELS) $(BUNDLE_DEFAULT_CHANNEL)
 # This variable is used to construct full image tags for bundle and catalog images.
 #
 # For example, running 'make bundle-build bundle-push catalog-build catalog-push' will build and push both
-# pulumi.com/pulumi-do-operator-bundle:$VERSION and pulumi.com/pulumi-do-operator-catalog:$VERSION.
-IMAGE_TAG_BASE ?= pulumi.com/pulumi-do-operator
+# pulumi.com/doplane-bundle:$VERSION and pulumi.com/doplane-catalog:$VERSION.
+IMAGE_TAG_BASE ?= pulumi.com/doplane
 
 # BUNDLE_IMG defines the image:tag used for the bundle.
 # You can use it as an arg. (E.g make bundle-build BUNDLE_IMG=<some-registry>/<project-name-bundle>:<tag>)
@@ -52,10 +52,10 @@ OPERATOR_SDK_VERSION ?= v1.42.3
 # Image URL to use all building/pushing image targets
 IMG ?= controller:latest
 # Runner image (pulumi CLI + provider plugins) used by Job-mode runners
-RUNNER_IMG ?= pulumi-do-runner:dev
+RUNNER_IMG ?= doplane-runner:dev
 
 KUSTOMIZE_DIR ?= deploy/kustomize
-HELM_CHART_DIR ?= deploy/pulumi-do-operator
+HELM_CHART_DIR ?= deploy/doplane
 HELM ?= helm
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
@@ -131,7 +131,7 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
 # CertManager is installed by default; skip with:
 # - CERT_MANAGER_INSTALL_SKIP=true
-KIND_CLUSTER ?= pulumi-do-operator-test-e2e
+KIND_CLUSTER ?= doplane-test-e2e
 
 .PHONY: setup-test-e2e
 setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
@@ -204,10 +204,10 @@ PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
 docker-buildx: ## Build and push docker image for the manager for cross-platform support
 	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
 	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
-	- $(CONTAINER_TOOL) buildx create --name pulumi-do-operator-builder
-	$(CONTAINER_TOOL) buildx use pulumi-do-operator-builder
+	- $(CONTAINER_TOOL) buildx create --name doplane-builder
+	$(CONTAINER_TOOL) buildx use doplane-builder
 	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
-	- $(CONTAINER_TOOL) buildx rm pulumi-do-operator-builder
+	- $(CONTAINER_TOOL) buildx rm doplane-builder
 	rm Dockerfile.cross
 
 .PHONY: build-installer
@@ -250,9 +250,9 @@ helm-lint: manifests ## Lint the Helm chart.
 
 .PHONY: helm-template
 helm-template: manifests ## Render the Helm chart locally with IMG and RUNNER_IMG.
-	$(HELM) template pulumi-do-operator $(HELM_CHART_DIR) \
+	$(HELM) template doplane $(HELM_CHART_DIR) \
 		--include-crds \
-		--namespace pulumi-do-operator-system \
+		--namespace doplane-system \
 		--set-string image.fullName=$(IMG) \
 		--set-string runnerImage.fullName=$(RUNNER_IMG)
 
@@ -263,8 +263,8 @@ helm-package: manifests ## Package the Helm chart into dist/.
 
 .PHONY: helm-install
 helm-install: manifests ## Install or upgrade the Helm chart with IMG and RUNNER_IMG.
-	$(HELM) upgrade --install pulumi-do-operator $(HELM_CHART_DIR) \
-		--namespace pulumi-do-operator-system \
+	$(HELM) upgrade --install doplane $(HELM_CHART_DIR) \
+		--namespace doplane-system \
 		--create-namespace \
 		--set-string image.fullName=$(IMG) \
 		--set-string runnerImage.fullName=$(RUNNER_IMG)

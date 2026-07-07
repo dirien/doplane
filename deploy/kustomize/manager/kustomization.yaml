@@ -6,5 +6,5 @@ patches:
 - path: runner_image_patch.yaml
 images:
 - name: controller
-  newName: pulumi-do-operator
+  newName: doplane
   newTag: dev

@@ -1,4 +1,4 @@
-# pulumi-do-operator
+# doplane
 
 A Kubernetes operator that manages individual cloud resources through the new
 [`pulumi do`](https://www.pulumi.com/docs/) CLI — with zero Pulumi programs,
@@ -18,7 +18,7 @@ spec:
   properties:                      # validated against the registry schema
     bucket: my-bucket-name
     tags:
-      managed-by: pulumi-do-operator
+      managed-by: doplane
 ```
 
 After reconciliation:
@@ -61,13 +61,13 @@ operation (and every registry schema fetch) is spawned as a dedicated
 **Kubernetes Job** using a separate runner image:
 
 - manager image: distroless, no Pulumi CLI, no cloud credentials;
-- runner image (`Dockerfile.runner`): the **`pdo-runner`** binary + `pulumi`
+- runner image (`Dockerfile.runner`): the **`doplane-runner`** binary + `pulumi`
   CLI + language toolchains + pre-installed provider plugins, hardened pod
   (non-root, read-only root filesystem, no capabilities, no service-account
   token, seccomp `RuntimeDefault`), own resource limits,
   `activeDeadlineSeconds` and TTL cleanup;
-- each Job runs exactly one typed `pdo-runner` invocation: the operation
-  arrives as one JSON document (`PDO_OP`), the outcome returns as one JSON
+- each Job runs exactly one typed `doplane-runner` invocation: the operation
+  arrives as one JSON document (`DOPLANE_OP`), the outcome returns as one JSON
   envelope with a machine-readable failure code — no shell scripts, no log
   scraping;
 - Jobs get deterministic names derived from the owning object and operation,
@@ -114,7 +114,7 @@ spec:
 
 Requires `PULUMI_ACCESS_TOKEN` in the `provider-credentials` Secret (and
 `KUBECONFIG_CONTENT` for components that target Kubernetes) — see
-`hack/sync-creds.sh`. Every operation runs as one typed `pdo-runner`
+`hack/sync-creds.sh`. Every operation runs as one typed `doplane-runner`
 invocation in the Job; failures surface as machine-readable condition
 reasons (`RegistryAuthMissing`, `RegistryResolveFailed`, `EngineFailed`, …).
 
@@ -147,12 +147,12 @@ cross-provider composite DAG.
 ## Getting started (kind)
 
 ```sh
-kind create cluster --name pdo
+kind create cluster --name doplane
 
-make docker-build docker-build-runner IMG=pulumi-do-operator:dev RUNNER_IMG=pulumi-do-runner:dev
-kind load docker-image pulumi-do-operator:dev pulumi-do-runner:dev --name pdo
+make docker-build docker-build-runner IMG=doplane:dev RUNNER_IMG=doplane-runner:dev
+kind load docker-image doplane:dev doplane-runner:dev --name doplane
 
-make install deploy IMG=pulumi-do-operator:dev
+make install deploy IMG=doplane:dev
 
 # AWS credentials for runner pods, from the Pulumi ESC environment
 # pulumi-idp/auth (only AWS_* keys are copied). Re-run when the short-lived

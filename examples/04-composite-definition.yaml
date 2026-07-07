@@ -27,7 +27,7 @@ spec:
       properties:
         bucket: ${self.name}-${resources.suffix.id}
         tags:
-          managed-by: pulumi-do-operator
+          managed-by: doplane
           composite: ${self.name}
           env: ${params.env}
     - name: pab

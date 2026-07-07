@@ -1,6 +1,6 @@
-# Runner image for pulumi-do-operator Jobs: the pdo-runner binary, pulumi
+# Runner image for doplane Jobs: the doplane-runner binary, pulumi
 # CLI, language toolchains and pre-installed provider plugins. Every
-# operation runs in a short-lived Job pod as a single typed pdo-runner
+# operation runs in a short-lived Job pod as a single typed doplane-runner
 # invocation (no shell scripts), isolated from the controller manager.
 #
 # The full pulumi/pulumi base (rather than pulumi-base) ships the Node.js,
@@ -14,7 +14,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/runner/ cmd/runner/
 COPY internal/runnerops/ internal/runnerops/
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -o pdo-runner ./cmd/runner
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -o doplane-runner ./cmd/runner
 
 FROM pulumi/pulumi:3.250.0
 
@@ -22,7 +22,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /workspace/pdo-runner /pdo-runner
+COPY --from=builder /workspace/doplane-runner /doplane-runner
 
 # Common plugins are baked in so runner pods work without downloads at
 # reconcile time. Versions must match the ones pinned in DoResource

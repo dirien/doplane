@@ -36,7 +36,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	dov1alpha1 "github.com/dirien/pulumi-do-operator/api/v1alpha1"
+	dov1alpha1 "github.com/dirien/doplane/api/v1alpha1"
 )
 
 const (

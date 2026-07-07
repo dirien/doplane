@@ -4,7 +4,7 @@ apiVersion: do.pulumi.com/v1alpha1
 kind: DoResource
 metadata:
   labels:
-    app.kubernetes.io/name: pulumi-do-operator
+    app.kubernetes.io/name: doplane
     app.kubernetes.io/managed-by: kustomize
   name: doresource-sample
 spec:
@@ -13,4 +13,4 @@ spec:
   package: random@4.21.0
   properties:
     length: 3
-    prefix: pdo
+    prefix: doplane

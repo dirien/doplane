@@ -17,7 +17,7 @@ limitations under the License.
 // Package pulumido connects the operator to runner operations
 // (internal/runnerops): the ExecRunner runs them in-process for development,
 // the JobRunner ships them to isolated Kubernetes Jobs running the
-// pdo-runner binary. Operation outcomes travel as typed envelopes, so
+// doplane-runner binary. Operation outcomes travel as typed envelopes, so
 // failures carry machine-readable codes instead of log heuristics.
 package pulumido
 
@@ -28,7 +28,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dirien/pulumi-do-operator/internal/runnerops"
+	"github.com/dirien/doplane/internal/runnerops"
 )
 
 // ErrReadNotSupported is returned by Read when the provider does not
