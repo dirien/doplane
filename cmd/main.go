@@ -21,6 +21,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -32,6 +33,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -59,6 +61,30 @@ func defaultRunnerMode() string {
 	return "exec"
 }
 
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// parseWatchNamespaces splits a comma-separated namespace list into the
+// cache configuration for a namespace-scoped deployment. An empty list
+// means cluster-wide. Cluster-scoped objects (DoCompositeDefinition, CRDs)
+// are watched cluster-wide either way.
+func parseWatchNamespaces(list string) map[string]cache.Config {
+	namespaces := map[string]cache.Config{}
+	for _, ns := range strings.Split(list, ",") {
+		if ns = strings.TrimSpace(ns); ns != "" {
+			namespaces[ns] = cache.Config{}
+		}
+	}
+	if len(namespaces) == 0 {
+		return nil
+	}
+	return namespaces
+}
+
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
@@ -77,7 +103,11 @@ func main() {
 	var runnerMode string
 	var runnerImage string
 	var runnerNamespace string
+	var runnerNamespaceMode string
+	var watchNamespaces string
 	var credentialsSecret string
+	var pluginCachePVC string
+	var pluginCacheMountPath string
 	var runnerTimeout time.Duration
 	var pulumiBin string
 	var tlsOpts []func(*tls.Config)
@@ -105,9 +135,23 @@ func main() {
 		"Image for runner Jobs (pulumi CLI + provider plugins + jq). Required in job mode.")
 	flag.StringVar(&runnerNamespace, "runner-namespace", os.Getenv("POD_NAMESPACE"),
 		"Namespace runner Jobs are created in. Defaults to the operator's namespace.")
+	flag.StringVar(&runnerNamespaceMode, "runner-namespace-mode", envOr("RUNNER_NAMESPACE_MODE", "operator"),
+		"Where runner Jobs execute: 'operator' runs every Job in the runner namespace with its shared "+
+			"credentials Secret; 'resource' runs each Job in the owning object's namespace, picking up "+
+			"that namespace's credentials Secret (per-tenant credentials).")
+	flag.StringVar(&watchNamespaces, "watch-namespaces", os.Getenv("WATCH_NAMESPACES"),
+		"Comma-separated list of namespaces to reconcile (namespace-scoped deployment). "+
+			"Empty watches the whole cluster.")
 	flag.StringVar(&credentialsSecret, "credentials-secret", "provider-credentials",
-		"Optional Secret in the runner namespace whose keys become environment variables "+
+		"Optional Secret in the runner Job's namespace whose keys become environment variables "+
 			"of runner pods (cloud provider credentials).")
+	flag.StringVar(&pluginCachePVC, "plugin-cache-pvc", os.Getenv("PLUGIN_CACHE_PVC"),
+		"Optional PersistentVolumeClaim (in the runner namespace) mounted into runner Jobs as a shared "+
+			"writable plugin cache. Pinned provider plugins install there on first use, so new providers "+
+			"need no runner image rebuild. Empty disables the cache.")
+	flag.StringVar(&pluginCacheMountPath, "plugin-cache-mount-path",
+		envOr("PLUGIN_CACHE_MOUNT_PATH", "/var/lib/doplane/pulumi-home"),
+		"Mount path of the plugin cache PVC inside runner pods.")
 	flag.DurationVar(&runnerTimeout, "runner-timeout", 10*time.Minute,
 		"Timeout for a single pulumi do operation.")
 	flag.StringVar(&pulumiBin, "pulumi-bin", "pulumi", "Path to the pulumi binary (exec mode only).")
@@ -209,7 +253,11 @@ func main() {
 	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                 scheme,
+		Scheme: scheme,
+		Cache: cache.Options{
+			// Nil DefaultNamespaces keeps the cluster-wide default.
+			DefaultNamespaces: parseWatchNamespaces(watchNamespaces),
+		},
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
@@ -243,19 +291,28 @@ func main() {
 			setupLog.Error(nil, "runner-namespace (or POD_NAMESPACE) is required in job mode")
 			os.Exit(1)
 		}
+		if runnerNamespaceMode != "operator" && runnerNamespaceMode != "resource" {
+			setupLog.Error(nil, "invalid runner-namespace-mode, want 'operator' or 'resource'",
+				"runner-namespace-mode", runnerNamespaceMode)
+			os.Exit(1)
+		}
 		clientset, err := kubernetes.NewForConfig(mgr.GetConfig())
 		if err != nil {
 			setupLog.Error(err, "unable to create clientset for runner jobs")
 			os.Exit(1)
 		}
 		runner = &pulumido.JobRunner{
-			Clientset:         clientset,
-			Namespace:         runnerNamespace,
-			Image:             runnerImage,
-			CredentialsSecret: credentialsSecret,
-			Timeout:           runnerTimeout,
+			Clientset:            clientset,
+			Namespace:            runnerNamespace,
+			PerResourceNamespace: runnerNamespaceMode == "resource",
+			Image:                runnerImage,
+			CredentialsSecret:    credentialsSecret,
+			PluginCachePVC:       pluginCachePVC,
+			PluginCacheMountPath: pluginCacheMountPath,
+			Timeout:              runnerTimeout,
 		}
-		setupLog.Info("using job runner", "image", runnerImage, "namespace", runnerNamespace)
+		setupLog.Info("using job runner", "image", runnerImage, "namespace", runnerNamespace,
+			"namespace-mode", runnerNamespaceMode)
 	case "exec":
 		runner = &pulumido.ExecRunner{PulumiBin: pulumiBin, Timeout: runnerTimeout}
 		setupLog.Info("using exec runner", "pulumi", pulumiBin)
@@ -264,15 +321,32 @@ func main() {
 		os.Exit(1)
 	}
 
+	schemas := pulumido.NewSchemaCache(runner)
 	if err := (&controller.DoResourceReconciler{
 		Client:   mgr.GetClient(),
 		Live:     mgr.GetAPIReader(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("doplane"),
 		Runner:   runner,
-		Schemas:  pulumido.NewSchemaCache(runner),
+		Schemas:  schemas,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DoResource")
+		os.Exit(1)
+	}
+	providerCachePath := ""
+	if pluginCachePVC != "" {
+		providerCachePath = pluginCacheMountPath
+	}
+	if err := (&controller.DoProviderReconciler{
+		Client:          mgr.GetClient(),
+		Live:            mgr.GetAPIReader(),
+		Scheme:          mgr.GetScheme(),
+		Recorder:        mgr.GetEventRecorderFor("doplane"),
+		Schemas:         schemas,
+		RunnerNamespace: runnerNamespace,
+		PluginCachePath: providerCachePath,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "DoProvider")
 		os.Exit(1)
 	}
 	if err := (&controller.DoCompositeReconciler{

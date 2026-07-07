@@ -54,6 +54,7 @@ func run() int {
 
 	runner := &runnerops.Runner{
 		BakedPlugins: os.Getenv("DOPLANE_BAKED_PLUGINS"),
+		PluginCache:  os.Getenv(runnerops.EnvPluginCache),
 		Progress:     os.Stderr,
 	}
 	result := runner.Execute(ctx, op)
