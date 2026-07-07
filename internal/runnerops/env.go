@@ -35,16 +35,22 @@ type workspace struct {
 func (w *workspace) projectDir() string { return filepath.Join(w.root, "project") }
 
 // prepare builds the workspace. bakedPlugins is the image's read-only plugin
-// directory ("" to skip seeding).
-func prepare(root, bakedPlugins string) (*workspace, error) {
+// directory and cachePlugins the shared cache's plugin directory ("" skips
+// either seeding). The workspace only ever reads the shared cache — plugin
+// installs into it happen before prepare, so operations cannot leak
+// credentials or state onto the cache volume.
+func prepare(root, bakedPlugins, cachePlugins string) (*workspace, error) {
 	home := filepath.Join(root, "pulumi-home")
 	for _, dir := range []string{filepath.Join(home, "plugins"), filepath.Join(root, "state"), filepath.Join(root, "project")} {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return nil, fmt.Errorf("preparing workspace: %w", err)
 		}
 	}
-	if bakedPlugins != "" {
-		if err := seedPlugins(bakedPlugins, filepath.Join(home, "plugins")); err != nil {
+	for _, plugins := range []string{bakedPlugins, cachePlugins} {
+		if plugins == "" {
+			continue
+		}
+		if err := seedPlugins(plugins, filepath.Join(home, "plugins")); err != nil {
 			return nil, err
 		}
 	}

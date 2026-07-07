@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -38,6 +39,10 @@ type Runner struct {
 	// BakedPlugins is the image's read-only plugin dir seeded into each
 	// workspace ("" disables seeding).
 	BakedPlugins string
+	// PluginCache is the shared writable plugin cache (a PVC mount
+	// in-cluster; "" disables it). Pinned plugins are installed there once
+	// under a per-plugin lock and seeded into every operation's workspace.
+	PluginCache string
 	// Progress receives pulumi's human output (pod logs / dev console).
 	// Defaults to os.Stderr, keeping stdout free for the result envelope.
 	Progress io.Writer
@@ -67,7 +72,24 @@ func (r *Runner) Execute(ctx context.Context, op Op) Result {
 	}
 	defer func() { _ = os.RemoveAll(work) }()
 
-	ws, err := prepare(work, r.BakedPlugins)
+	// A pinned plain package installs into the shared cache first (once,
+	// under lock) so the operation — and every later one — reuses it.
+	// Unpinned, git and registry references keep the on-demand path.
+	cachePlugins := ""
+	if r.PluginCache != "" {
+		if name, version, ok := ParsePluginRef(op.Package); ok {
+			if err := r.ensurePlugin(ctx, r.PluginCache, name, version); err != nil {
+				var ce *cacheError
+				if errors.As(err, &ce) {
+					return failure(ce.code, "%v", err)
+				}
+				return failure(CodePluginInstall, "%v", err)
+			}
+		}
+		cachePlugins = filepath.Join(r.PluginCache, "plugins")
+	}
+
+	ws, err := prepare(work, r.BakedPlugins, cachePlugins)
 	if err != nil {
 		return failure(CodeOperationFailed, "%v", err)
 	}
@@ -286,10 +308,14 @@ func (r *Runner) run(ctx context.Context, ws *workspace, args ...string) (string
 }
 
 func (r *Runner) runIn(ctx context.Context, ws *workspace, dir string, args ...string) (string, error) {
+	return r.runEnv(ctx, dir, ws.env, args...)
+}
+
+func (r *Runner) runEnv(ctx context.Context, dir string, env []string, args ...string) (string, error) {
 	// #nosec G204 -- structured argv, no shell; inputs come from the validated CR spec.
 	cmd := exec.CommandContext(ctx, r.bin(), args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), ws.env...)
+	cmd.Env = append(os.Environ(), env...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {

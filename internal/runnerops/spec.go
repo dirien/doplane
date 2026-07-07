@@ -43,15 +43,17 @@ const (
 // in the operator's status, so `kubectl get` tells the user what actually
 // went wrong.
 const (
-	CodeInvalidSpec         = "InvalidSpec"
-	CodeNotFound            = "NotFound"
-	CodeReadNotSupported    = "ReadNotSupported"
-	CodeRegistryAuthMissing = "RegistryAuthMissing"
-	CodeRegistryResolve     = "RegistryResolveFailed"
-	CodeSchemaFetch         = "SchemaFetchFailed"
-	CodeOperationFailed     = "OperationFailed"
-	CodeEngineFailed        = "EngineFailed"
-	CodeOutputParse         = "OutputParseFailed"
+	CodeInvalidSpec            = "InvalidSpec"
+	CodeNotFound               = "NotFound"
+	CodeReadNotSupported       = "ReadNotSupported"
+	CodeRegistryAuthMissing    = "RegistryAuthMissing"
+	CodeRegistryResolve        = "RegistryResolveFailed"
+	CodeSchemaFetch            = "SchemaFetchFailed"
+	CodeOperationFailed        = "OperationFailed"
+	CodeEngineFailed           = "EngineFailed"
+	CodeOutputParse            = "OutputParseFailed"
+	CodePluginInstall          = "PluginInstallFailed"
+	CodePluginCacheNotWritable = "PluginCacheNotWritable"
 )
 
 // Op is the single JSON document describing one operation. It reaches the
