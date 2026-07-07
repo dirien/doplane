@@ -17,8 +17,10 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +30,7 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -314,7 +317,28 @@ func main() {
 		setupLog.Info("using job runner", "image", runnerImage, "namespace", runnerNamespace,
 			"namespace-mode", runnerNamespaceMode)
 	case "exec":
-		runner = &pulumido.ExecRunner{PulumiBin: pulumiBin, Timeout: runnerTimeout}
+		clientset, err := kubernetes.NewForConfig(mgr.GetConfig())
+		if err != nil {
+			setupLog.Error(err, "unable to create clientset for secret resolution")
+			os.Exit(1)
+		}
+		runner = &pulumido.ExecRunner{
+			PulumiBin: pulumiBin,
+			Timeout:   runnerTimeout,
+			// Dev mode has no Job env injection: resolve valuesFrom Secrets
+			// directly (in the resource's namespace).
+			ResolveSecret: func(ctx context.Context, namespace, name, key string) (string, error) {
+				secret, err := clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+				if err != nil {
+					return "", err
+				}
+				value, ok := secret.Data[key]
+				if !ok {
+					return "", fmt.Errorf("secret %s/%s has no key %q", namespace, name, key)
+				}
+				return string(value), nil
+			},
+		}
 		setupLog.Info("using exec runner", "pulumi", pulumiBin)
 	default:
 		setupLog.Error(nil, "invalid runner-mode, want 'job' or 'exec'", "runner-mode", runnerMode)
@@ -337,7 +361,7 @@ func main() {
 	if pluginCachePVC != "" {
 		providerCachePath = pluginCacheMountPath
 	}
-	if err := (&controller.DoProviderReconciler{
+	providerReconciler := &controller.DoProviderReconciler{
 		Client:          mgr.GetClient(),
 		Live:            mgr.GetAPIReader(),
 		Scheme:          mgr.GetScheme(),
@@ -345,8 +369,15 @@ func main() {
 		Schemas:         schemas,
 		RunnerNamespace: runnerNamespace,
 		PluginCachePath: providerCachePath,
-	}).SetupWithManager(mgr); err != nil {
+	}
+	if err := providerReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DoProvider")
+		os.Exit(1)
+	}
+	if err := (&controller.DoProviderConfigReconciler{
+		Profile: providerReconciler,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "DoProviderConfig")
 		os.Exit(1)
 	}
 	if err := (&controller.DoCompositeReconciler{
