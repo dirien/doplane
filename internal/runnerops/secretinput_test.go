@@ -53,6 +53,20 @@ func TestApplySecretInputs(t *testing.T) {
 		}
 	})
 
+	t.Run("empty values are legitimate (only absence fails)", func(t *testing.T) {
+		op := &Op{SecretInputs: map[string]string{"password": "DOPLANE_SECRET_0"}}
+		values, err := applySecretInputs(op, lookup(map[string]string{"DOPLANE_SECRET_0": ""}))
+		if err != nil {
+			t.Fatalf("an empty Secret value must be accepted: %v", err)
+		}
+		if op.Properties["password"] != "" {
+			t.Errorf("password = %v, want empty string", op.Properties["password"])
+		}
+		if len(values) != 0 {
+			t.Errorf("empty values must not join the redaction set (would corrupt all output): %q", values)
+		}
+	})
+
 	t.Run("missing env var is a typed failure naming the path, never a value", func(t *testing.T) {
 		op := &Op{SecretInputs: map[string]string{"password": "DOPLANE_SECRET_0"}}
 		_, err := applySecretInputs(op, lookup(nil))

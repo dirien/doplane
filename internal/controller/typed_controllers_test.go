@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,6 +49,28 @@ func TestPluralize(t *testing.T) {
 		}
 	}
 }
+
+func TestTypedRegistrarClaim(t *testing.T) {
+	reg := &TypedRegistrar{}
+	if err := reg.claim("buckets", "resource:aws:s3/bucket:Bucket"); err != nil {
+		t.Fatalf("first claim must succeed: %v", err)
+	}
+	if err := reg.claim("buckets", "resource:aws:s3/bucket:Bucket"); err != nil {
+		t.Fatalf("re-claim by the same owner must succeed: %v", err)
+	}
+	err := reg.claim("buckets", "resource:gcp:storage/bucket:Bucket")
+	if err == nil {
+		t.Fatal("a different owner claiming the same plural must be rejected")
+	}
+	if got := err.Error(); !contains(got, "aws:s3/bucket:Bucket") {
+		t.Errorf("error must name the existing owner: %v", err)
+	}
+	if err := reg.claim("staticsites", "composite:site-def"); err != nil {
+		t.Fatalf("unrelated plurals stay claimable: %v", err)
+	}
+}
+
+func contains(s, sub string) bool { return strings.Contains(s, sub) }
 
 var _ = Describe("Typed managed resources and composite APIs", func() {
 	const token = "random:index/randomPet:RandomPet"

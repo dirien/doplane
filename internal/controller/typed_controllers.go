@@ -46,13 +46,34 @@ import (
 
 // TypedRegistrar applies generated CRDs and starts one dynamic controller
 // per typed kind at runtime (the manager accepts runnables after Start).
-// Registrations are idempotent: a kind's controller starts exactly once
-// per manager lifetime.
+// Registrations are idempotent per owner — re-registering the same source
+// re-applies the CRD; a *different* source claiming an already-served
+// plural is rejected, so colliding kinds fail fast instead of silently
+// reconciling against the wrong backing resource.
 type TypedRegistrar struct {
 	Manager ctrl.Manager
 
-	mu      sync.Mutex
+	mu sync.Mutex
+	// owners maps a served plural to the identity that registered it
+	// ("resource:<token>" / "composite:<definition>"); started marks
+	// plurals whose controller is already running.
+	owners  map[string]string
 	started map[string]bool
+}
+
+// claim records ownership of a plural, rejecting a second owner.
+func (reg *TypedRegistrar) claim(plural, owner string) error {
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if existing, ok := reg.owners[plural]; ok && existing != owner {
+		return fmt.Errorf("typed API %q is already served for %s; rename the kind (or set spec.api.plural) to avoid the collision",
+			plural+"."+typedGroup, existing)
+	}
+	if reg.owners == nil {
+		reg.owners = map[string]string{}
+	}
+	reg.owners[plural] = owner
+	return nil
 }
 
 // applyCRD creates or updates a generated CRD in place.
@@ -79,6 +100,9 @@ func (reg *TypedRegistrar) applyCRD(ctx context.Context, crd *apiextensionsv1.Cu
 func (reg *TypedRegistrar) EnsureResourceAPI(ctx context.Context, crd *apiextensionsv1.CustomResourceDefinition,
 	token, providerName string,
 ) error {
+	if err := reg.claim(crd.Spec.Names.Plural, "resource:"+token); err != nil {
+		return err
+	}
 	if err := reg.applyCRD(ctx, crd); err != nil {
 		return err
 	}
@@ -98,6 +122,9 @@ func (reg *TypedRegistrar) EnsureResourceAPI(ctx context.Context, crd *apiextens
 func (reg *TypedRegistrar) EnsureCompositeAPI(ctx context.Context, crd *apiextensionsv1.CustomResourceDefinition,
 	definition string,
 ) error {
+	if err := reg.claim(crd.Spec.Names.Plural, "composite:"+definition); err != nil {
+		return err
+	}
 	if err := reg.applyCRD(ctx, crd); err != nil {
 		return err
 	}

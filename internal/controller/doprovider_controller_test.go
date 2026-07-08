@@ -175,7 +175,9 @@ var _ = Describe("DoProvider Controller", func() {
 	})
 
 	It("checks DoProviderConfig credentials in the config's own namespace", func() {
-		configReconciler := &DoProviderConfigReconciler{Profile: reconciler}
+		// Per-resource runner mode: Jobs (and thus Secrets) live in the
+		// tenant namespace — that is where readiness must be validated.
+		configReconciler := &DoProviderConfigReconciler{Profile: reconciler, PerResourceNamespace: true}
 		config := &dov1alpha1.DoProviderConfig{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: providerName},
 			Spec: dov1alpha1.DoProviderSpec{

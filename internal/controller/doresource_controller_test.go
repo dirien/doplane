@@ -43,6 +43,7 @@ type fakeRunner struct {
 	secretInputs []pulumido.SecretInput
 	patched      []map[string]any
 	deleted      []string
+	deletedPkgs  []string
 	patchErr     error
 	createErrs   []error // consumed one per Create call before succeeding
 
@@ -107,8 +108,9 @@ func (f *fakeRunner) Read(_ context.Context, _, _, id string) (map[string]any, e
 	return map[string]any{"id": id}, nil
 }
 
-func (f *fakeRunner) Delete(_ context.Context, _, _, id string) error {
+func (f *fakeRunner) Delete(_ context.Context, _, pkg, id string) error {
 	f.deleted = append(f.deleted, id)
+	f.deletedPkgs = append(f.deletedPkgs, pkg)
 	return nil
 }
 

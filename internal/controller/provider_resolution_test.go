@@ -140,6 +140,14 @@ var _ = Describe("DoResource providerRef resolution", func() {
 
 		reconcileN(2)
 		Expect(runner.createdPkgs).To(ConsistOf("random@4.21.0"))
+
+		// Teardown must run with the profile's pin too — not an
+		// empty/inferred package.
+		res := &dov1alpha1.DoResource{}
+		Expect(k8sClient.Get(ctx, resourceKey, res)).To(Succeed())
+		Expect(k8sClient.Delete(ctx, res)).To(Succeed())
+		reconcileN(1)
+		Expect(runner.deletedPkgs).To(ConsistOf("random@4.21.0"))
 	})
 
 	It("rejects a spec.package that conflicts with the provider", func() {

@@ -36,6 +36,12 @@ type DoProviderConfigReconciler struct {
 	// Profile carries the shared validation dependencies (client, schema
 	// cache, recorder, plugin cache path).
 	Profile *DoProviderReconciler
+	// PerResourceNamespace mirrors the runner's namespace mode: it decides
+	// where a config's credentials Secret is actually loaded from —
+	// the tenant namespace in resource mode, the operator's runner
+	// namespace otherwise — so Ready reflects the namespace the Job will
+	// really use.
+	PerResourceNamespace bool
 }
 
 // +kubebuilder:rbac:groups=do.pulumi.com,resources=doproviderconfigs,verbs=get;list;watch
@@ -48,8 +54,16 @@ func (r *DoProviderConfigReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	// Runner Jobs load the credentials Secret from the namespace they
+	// execute in: the config's namespace only in per-resource runner mode.
+	// Validating anywhere else would mark configs Ready while operations
+	// fail on a missing Secret.
+	secretNamespace := r.Profile.RunnerNamespace
+	if r.PerResourceNamespace {
+		secretNamespace = config.Namespace
+	}
 	if err := r.Profile.validateProfile(ctx, config, "doproviderconfig/"+config.Namespace+"/"+config.Name,
-		config.Spec, &config.Status, config.Generation, config.Namespace); err != nil {
+		config.Spec, &config.Status, config.Generation, secretNamespace); err != nil {
 		return ctrl.Result{}, err
 	}
 	if n, err := r.Profile.countDependents(ctx, dov1alpha1.ProviderKindConfig, config.Name, config.Namespace); err == nil {

@@ -123,7 +123,7 @@ func (r *DoResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// A vanished provider must not wedge the finalizer — the operation runs
 	// with the deployment-default credentials and surfaces any auth failure.
 	if !res.DeletionTimestamp.IsZero() {
-		return r.reconcileDelete(ctx, res)
+		return r.reconcileDelete(ctx, res, pkg)
 	}
 
 	if !controllerutil.ContainsFinalizer(res, doResourceFinalizer) {
@@ -297,7 +297,10 @@ func (r *DoResourceReconciler) reconcileComponent(ctx context.Context, res *dov1
 
 // reconcileDelete tears down the external resource once no dependents
 // remain, then releases the finalizer.
-func (r *DoResourceReconciler) reconcileDelete(ctx context.Context, res *dov1alpha1.DoResource) (ctrl.Result, error) {
+// pkg is the provider-profile-resolved package: a resource whose package
+// comes from spec.providerRef must tear down with the profile's pin, not
+// an empty/inferred one.
+func (r *DoResourceReconciler) reconcileDelete(ctx context.Context, res *dov1alpha1.DoResource, pkg string) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 	if !controllerutil.ContainsFinalizer(res, doResourceFinalizer) {
 		return ctrl.Result{}, nil
@@ -317,7 +320,7 @@ func (r *DoResourceReconciler) reconcileDelete(ctx context.Context, res *dov1alp
 		}
 		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 	}
-	token, pkg := res.Spec.Type, res.Spec.Package
+	token := res.Spec.Type
 	if res.Spec.DeletionPolicy != dov1alpha1.DeletionOrphan && res.Status.ID != "" {
 		log.Info("deleting external resource", "type", token, "id", res.Status.ID)
 		var err error

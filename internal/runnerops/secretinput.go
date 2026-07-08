@@ -49,13 +49,18 @@ func applySecretInputs(op *Op, lookup func(string) (string, bool)) ([]string, er
 	for _, path := range paths {
 		envName := op.SecretInputs[path]
 		value, ok := lookup(envName)
-		if !ok || value == "" {
+		if !ok {
+			// Absence means the Secret/key is missing in the Job's
+			// namespace; an empty string is a legitimate Secret value.
 			return nil, fmt.Errorf("secret input for property %q: environment variable %s is not set (Secret missing in the runner Job's namespace?)", path, envName)
 		}
 		if err := SetPath(op.Properties, path, value); err != nil {
 			return nil, fmt.Errorf("secret input for property %q: %w", path, err)
 		}
-		values = append(values, value)
+		if value != "" {
+			// Redacting the empty string would corrupt every output.
+			values = append(values, value)
+		}
 	}
 	return values, nil
 }

@@ -97,6 +97,10 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
+// runnerNamespaceModeResource is the per-resource-namespace runner mode
+// (tenant credentials and Jobs in the resource's namespace).
+const runnerNamespaceModeResource = "resource"
+
 // runnerConfig collects the runner-related flags.
 type runnerConfig struct {
 	mode                 string
@@ -121,7 +125,7 @@ func newRunner(mgr ctrl.Manager, cfg runnerConfig) (pulumido.Runner, error) {
 		if cfg.namespace == "" {
 			return nil, fmt.Errorf("runner-namespace (or POD_NAMESPACE) is required in job mode")
 		}
-		if cfg.namespaceMode != "operator" && cfg.namespaceMode != "resource" {
+		if cfg.namespaceMode != "operator" && cfg.namespaceMode != runnerNamespaceModeResource {
 			return nil, fmt.Errorf("invalid runner-namespace-mode %q, want 'operator' or 'resource'", cfg.namespaceMode)
 		}
 		clientset, err := kubernetes.NewForConfig(mgr.GetConfig())
@@ -132,7 +136,7 @@ func newRunner(mgr ctrl.Manager, cfg runnerConfig) (pulumido.Runner, error) {
 		return &pulumido.JobRunner{
 			Clientset:            clientset,
 			Namespace:            cfg.namespace,
-			PerResourceNamespace: cfg.namespaceMode == "resource",
+			PerResourceNamespace: cfg.namespaceMode == runnerNamespaceModeResource,
 			Image:                cfg.image,
 			CredentialsSecret:    cfg.credentialsSecret,
 			PluginCachePVC:       cfg.pluginCachePVC,
@@ -403,7 +407,8 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.DoProviderConfigReconciler{
-		Profile: providerReconciler,
+		Profile:              providerReconciler,
+		PerResourceNamespace: runnerNamespaceMode == runnerNamespaceModeResource,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DoProviderConfig")
 		os.Exit(1)
