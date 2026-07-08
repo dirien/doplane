@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -128,13 +129,30 @@ type JobRunner struct {
 	// PluginCachePVC is an optional PersistentVolumeClaim holding the shared
 	// writable plugin cache. When set, runner pods mount it at
 	// PluginCacheMountPath and install pinned provider plugins there on
-	// first use — new providers need no runner image rebuild.
+	// first use — new providers need no runner image rebuild. PVC
+	// references are namespace-local: tenant-namespace Jobs mount a claim
+	// of the same name in their own namespace when one exists.
 	PluginCachePVC string
 	// PluginCacheMountPath is where the cache PVC is mounted in runner pods.
 	PluginCacheMountPath string
 	// Timeout bounds a single operation end to end.
 	Timeout time.Duration
+
+	// tenantCaches remembers per-namespace PVC lookups so tenant Jobs do
+	// not cost one API GET each.
+	mu           sync.Mutex
+	tenantCaches map[string]tenantCacheEntry
 }
+
+// tenantCacheEntry is one remembered tenant-namespace PVC lookup.
+type tenantCacheEntry struct {
+	present bool
+	checked time.Time
+}
+
+// tenantCacheTTL bounds how long a tenant PVC lookup is remembered; a
+// freshly created claim takes effect within this window.
+const tenantCacheTTL = 5 * time.Minute
 
 var _ Runner = (*JobRunner)(nil)
 
@@ -235,6 +253,35 @@ func (r *JobRunner) jobNamespace(ctx context.Context) string {
 	return r.Namespace
 }
 
+// cacheAvailable reports whether the plugin cache can be mounted for Jobs
+// in namespace: always in the operator namespace; in tenant namespaces
+// only when a claim with the configured name exists there (PVC references
+// are namespace-local), so tenant-mode installs avoid repeated provider
+// downloads by pre-creating a per-namespace claim.
+func (r *JobRunner) cacheAvailable(ctx context.Context, namespace string) bool {
+	if r.PluginCachePVC == "" {
+		return false
+	}
+	if namespace == r.Namespace {
+		return true
+	}
+	r.mu.Lock()
+	entry, ok := r.tenantCaches[namespace]
+	r.mu.Unlock()
+	if ok && time.Since(entry.checked) < tenantCacheTTL {
+		return entry.present
+	}
+	_, err := r.Clientset.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, r.PluginCachePVC, metav1.GetOptions{})
+	present := err == nil
+	r.mu.Lock()
+	if r.tenantCaches == nil {
+		r.tenantCaches = map[string]tenantCacheEntry{}
+	}
+	r.tenantCaches[namespace] = tenantCacheEntry{present: present, checked: time.Now()}
+	r.mu.Unlock()
+	return present
+}
+
 // teardownVerb reports whether an operation removes the external resource —
 // the operations that must still run while the owning namespace is being
 // deleted, or its finalizers can never clear.
@@ -254,13 +301,13 @@ func (r *JobRunner) ensureJob(ctx context.Context, namespace, name, verb, opJSON
 		// A DoProvider profile pinned this operation to its own Secret.
 		credentials = fromProvider
 	}
-	job := r.buildJob(name, namespace, credentials, verb, opJSON, secretEnv)
+	job := r.buildJob(name, namespace, credentials, verb, opJSON, secretEnv, r.cacheAvailable(ctx, namespace))
 	_, err := r.Clientset.BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{})
 	switch {
 	case err == nil || apierrors.IsAlreadyExists(err):
 		return namespace, nil
 	case namespace != r.Namespace && teardownVerb(verb) && apierrors.HasStatusCause(err, corev1.NamespaceTerminatingCause):
-		fallback := r.buildJob(name, r.Namespace, credentials, verb, opJSON, secretEnv)
+		fallback := r.buildJob(name, r.Namespace, credentials, verb, opJSON, secretEnv, r.PluginCachePVC != "")
 		if _, err := r.Clientset.BatchV1().Jobs(r.Namespace).Create(ctx, fallback, metav1.CreateOptions{}); err != nil &&
 			!apierrors.IsAlreadyExists(err) {
 			return "", fmt.Errorf("creating fallback runner job %s/%s for terminating namespace %s: %w",
@@ -437,7 +484,7 @@ func (r *JobRunner) podLogs(namespace, jobName string) (string, error) {
 	return "", lastErr
 }
 
-func (r *JobRunner) buildJob(name, namespace, credentialsSecret, verb, opJSON string, secretEnv []corev1.EnvVar) *batchv1.Job {
+func (r *JobRunner) buildJob(name, namespace, credentialsSecret, verb, opJSON string, secretEnv []corev1.EnvVar, mountCache bool) *batchv1.Job {
 	env := []corev1.EnvVar{
 		{Name: "DOPLANE_OP", Value: opJSON},
 		{Name: "DOPLANE_BAKED_PLUGINS", Value: bakedPluginsDir},
@@ -459,10 +506,10 @@ func (r *JobRunner) buildJob(name, namespace, credentialsSecret, verb, opJSON st
 	}}
 	mounts := []corev1.VolumeMount{{Name: "tmp", MountPath: "/tmp"}}
 	var fsGroup *int64
-	// PVC references are namespace-local: the cache claim lives in the
-	// operator namespace, so per-resource-namespace Jobs skip it and fall
-	// back to baked plugins plus on-demand downloads.
-	if r.PluginCachePVC != "" && namespace == r.Namespace {
+	// mountCache is decided by cacheAvailable: operator-namespace Jobs
+	// always mount, tenant-namespace Jobs only when a same-named claim
+	// exists in their namespace (PVC references are namespace-local).
+	if mountCache {
 		env = append(env, corev1.EnvVar{Name: runnerops.EnvPluginCache, Value: r.PluginCacheMountPath})
 		volumes = append(volumes, corev1.Volume{
 			Name: "plugin-cache",

@@ -384,6 +384,17 @@ func classifyDoFailure(runErr error, stdout string) Result {
 		strings.Contains(text, "nosuchbucket") || strings.Contains(text, "does not exist") ||
 		strings.Contains(text, "status code: 404") || strings.Contains(text, "statuscode: 404"):
 		return failure(CodeNotFound, "%v", runErr)
+	case strings.Contains(text, "immutable") || strings.Contains(text, "force new") ||
+		strings.Contains(text, "forcenew") || strings.Contains(text, "cannot be updated") ||
+		strings.Contains(text, "cannot update") || strings.Contains(text, "requires replacement") ||
+		strings.Contains(text, "must be replaced") || strings.Contains(text, "cannot be changed"):
+		// An in-place update hit an immutable input: the resource must be
+		// replaced, which the operator gates behind protect/approval.
+		return failure(CodeReplacementRequired, "%v", runErr)
+	case strings.Contains(text, "already exists") || strings.Contains(text, "alreadyexists") ||
+		strings.Contains(text, "status code: 409") || strings.Contains(text, "statuscode: 409") ||
+		strings.Contains(text, "entity already exists") || strings.Contains(text, "duplicate"):
+		return failure(CodeAlreadyExists, "%v", runErr)
 	}
 	return failure(CodeOperationFailed, "%v", runErr)
 }

@@ -111,6 +111,15 @@ spec:
                   against the provider's JSON schema from the Pulumi registry before any
                   operation is attempted.
                 x-kubernetes-preserve-unknown-fields: true
+              protect:
+                description: |-
+                  Protect guards against accidental replacement: when a spec change
+                  cannot be applied in place, the resource stops with a terminal
+                  ReplacementRequired condition until the change is approved via the
+                  do.pulumi.com/approve-replacement annotation (set to the current
+                  generation). Only an explicit protect=false replaces automatically —
+                  unset behaves protected.
+                type: boolean
               providerRef:
                 description: |-
                   ProviderRef resolves package and credentials from a cluster-scoped

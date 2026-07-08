@@ -78,6 +78,15 @@ type DoResourceSpec struct {
 	// +optional
 	DeletionPolicy DeletionPolicy `json:"deletionPolicy,omitempty"`
 
+	// Protect guards against accidental replacement: when a spec change
+	// cannot be applied in place, the resource stops with a terminal
+	// ReplacementRequired condition until the change is approved via the
+	// do.pulumi.com/approve-replacement annotation (set to the current
+	// generation). Only an explicit protect=false replaces automatically —
+	// unset behaves protected.
+	// +optional
+	Protect *bool `json:"protect,omitempty"`
+
 	// References wire values from other DoResources in the same namespace
 	// into this resource's properties before validation and any provider
 	// operation. While a referenced value cannot be resolved yet the

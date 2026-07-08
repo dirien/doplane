@@ -76,6 +76,7 @@ type DoResourceReconciler struct {
 // +kubebuilder:rbac:groups="",resources=pods/log,verbs=get
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;update
 // +kubebuilder:rbac:groups=do.pulumi.com,resources=dousages,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get
 
 // Reconcile drives the external resource toward spec:
 // create when no id is recorded, patch when the spec generation changed,
@@ -203,6 +204,11 @@ func (r *DoResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	case res.Status.AppliedHash != hash:
 		log.Info("updating external resource", "type", token, "id", res.Status.ID)
 		state, err := r.Runner.Patch(ctx, token, pkg, res.Status.ID, props)
+		if pulumido.IsReplacementRequired(err) {
+			// The change hits an immutable input: replacement is gated by
+			// protect/approval and swaps create-before-delete when possible.
+			return r.reconcileReplacement(ctx, res, token, pkg, props, hash, err)
+		}
 		if errors.Is(err, pulumido.ErrReadNotSupported) {
 			// pulumi do patch reads before patching; providers without read
 			// support cannot be updated in place. Terminal until spec changes.

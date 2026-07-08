@@ -43,6 +43,8 @@ type fakeRunner struct {
 	secretInputs []pulumido.SecretInput
 	patched      []map[string]any
 	deleted      []string
+	patchErr     error
+	createErrs   []error // consumed one per Create call before succeeding
 
 	// componentMode makes FetchSchema report tokens as components and
 	// records engine operations.
@@ -71,6 +73,13 @@ func (f *fakeRunner) DeleteComponent(_ context.Context, _, _ string, engineState
 }
 
 func (f *fakeRunner) Create(ctx context.Context, token, pkg string, props map[string]any) (string, map[string]any, error) {
+	if len(f.createErrs) > 0 {
+		err := f.createErrs[0]
+		f.createErrs = f.createErrs[1:]
+		if err != nil {
+			return "", nil, err
+		}
+	}
 	f.createdPkgs = append(f.createdPkgs, pkg)
 	f.createdProps = append(f.createdProps, props)
 	f.secretInputs = pulumido.SecretInputsFromContext(ctx)
@@ -85,6 +94,9 @@ func (f *fakeRunner) Create(ctx context.Context, token, pkg string, props map[st
 }
 
 func (f *fakeRunner) Patch(_ context.Context, _, _, id string, props map[string]any) (map[string]any, error) {
+	if f.patchErr != nil {
+		return nil, f.patchErr
+	}
 	state := map[string]any{"id": id}
 	maps.Copy(state, props)
 	f.patched = append(f.patched, state)

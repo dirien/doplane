@@ -544,6 +544,11 @@ func (in *DoResourceSpec) DeepCopyInto(out *DoResourceSpec) {
 		*out = new(v1.JSON)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.Protect != nil {
+		in, out := &in.Protect, &out.Protect
+		*out = new(bool)
+		**out = **in
+	}
 	if in.References != nil {
 		in, out := &in.References, &out.References
 		*out = make([]Reference, len(*in))

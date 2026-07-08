@@ -44,6 +44,21 @@ var ErrNotFound = errors.New("external resource not found")
 // re-run the mutation.
 var ErrOutputUnavailable = errors.New("operation completed but its output is unavailable")
 
+// IsReplacementRequired reports whether an operation failed because the
+// change cannot be applied in place — the external resource must be
+// replaced (gated by protect/approval in the controller).
+func IsReplacementRequired(err error) bool {
+	var coded *CodedError
+	return errors.As(err, &coded) && coded.Code == runnerops.CodeReplacementRequired
+}
+
+// IsAlreadyExists reports a create that collided with an existing external
+// resource of the same identity.
+func IsAlreadyExists(err error) bool {
+	var coded *CodedError
+	return errors.As(err, &coded) && coded.Code == runnerops.CodeAlreadyExists
+}
+
 // PackagePinned reports whether a package reference pins a version. Git and
 // private-registry references carry their own pinning scheme; only plain
 // references without "name@version" are unpinned (including an empty

@@ -55,6 +55,8 @@ const (
 	CodePluginInstall          = "PluginInstallFailed"
 	CodePluginCacheNotWritable = "PluginCacheNotWritable"
 	CodeSecretInputMissing     = "SecretInputMissing"
+	CodeReplacementRequired    = "ReplacementRequired"
+	CodeAlreadyExists          = "AlreadyExists"
 )
 
 // Op is the single JSON document describing one operation. It reaches the

@@ -127,7 +127,7 @@ func TestEnsureJobTerminatingNamespaceFallback(t *testing.T) {
 
 func TestBuildJobNamespaceAndCredentials(t *testing.T) {
 	r := &JobRunner{Namespace: "doplane-system", CredentialsSecret: "provider-credentials"}
-	job := r.buildJob("do-create-abc", "tenant-a", r.CredentialsSecret, "create", "{}", nil)
+	job := r.buildJob("do-create-abc", "tenant-a", r.CredentialsSecret, "create", "{}", nil, false)
 
 	if job.Namespace != "tenant-a" {
 		t.Errorf("job namespace = %q, want the namespace passed in", job.Namespace)
@@ -141,6 +141,40 @@ func TestBuildJobNamespaceAndCredentials(t *testing.T) {
 	}
 }
 
+func TestCacheAvailable(t *testing.T) {
+	ctx := context.Background()
+	clientset := fake.NewClientset(&corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "tenant-b", Name: "plugin-cache"},
+	})
+	r := &JobRunner{Clientset: clientset, Namespace: "doplane-system", PluginCachePVC: "plugin-cache"}
+
+	if !r.cacheAvailable(ctx, "doplane-system") {
+		t.Error("operator namespace must always mount the cache")
+	}
+	if !r.cacheAvailable(ctx, "tenant-b") {
+		t.Error("tenant namespace with a same-named claim must mount it")
+	}
+	if r.cacheAvailable(ctx, "tenant-a") {
+		t.Error("tenant namespace without a claim must skip the cache")
+	}
+	// The negative lookup is remembered: a claim created moments later
+	// only takes effect after the TTL.
+	_, err := clientset.CoreV1().PersistentVolumeClaims("tenant-a").Create(ctx, &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "tenant-a", Name: "plugin-cache"},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.cacheAvailable(ctx, "tenant-a") {
+		t.Error("lookup must be cached within the TTL")
+	}
+
+	disabled := &JobRunner{Clientset: clientset, Namespace: "doplane-system"}
+	if disabled.cacheAvailable(ctx, "doplane-system") {
+		t.Error("no PVC configured means no cache anywhere")
+	}
+}
+
 func TestBuildJobPluginCache(t *testing.T) {
 	r := &JobRunner{
 		Namespace:            "doplane-system",
@@ -149,7 +183,7 @@ func TestBuildJobPluginCache(t *testing.T) {
 	}
 
 	t.Run("operator-namespace jobs mount the cache", func(t *testing.T) {
-		job := r.buildJob("do-create-abc", "doplane-system", "", "create", "{}", nil)
+		job := r.buildJob("do-create-abc", "doplane-system", "", "create", "{}", nil, true)
 		spec := job.Spec.Template.Spec
 		var mounted bool
 		for _, v := range spec.Volumes {
@@ -178,7 +212,7 @@ func TestBuildJobPluginCache(t *testing.T) {
 	})
 
 	t.Run("tenant-namespace jobs skip the cache (PVCs are namespace-local)", func(t *testing.T) {
-		job := r.buildJob("do-create-abc", "tenant-a", "", "create", "{}", nil)
+		job := r.buildJob("do-create-abc", "tenant-a", "", "create", "{}", nil, false)
 		spec := job.Spec.Template.Spec
 		for _, v := range spec.Volumes {
 			if v.PersistentVolumeClaim != nil {
