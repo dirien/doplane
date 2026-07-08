@@ -26,6 +26,9 @@ spec:
     - jsonPath: .status.conditions[?(@.type=='Ready')].reason
       name: REASON
       type: string
+    - jsonPath: .status.dependents
+      name: DEPENDENTS
+      type: integer
     - jsonPath: .metadata.creationTimestamp
       name: AGE
       type: date
@@ -166,6 +169,18 @@ spec:
                   - type
                   type: object
                 type: array
+              dependents:
+                description: |-
+                  Dependents counts the DoResources currently referencing this
+                  profile.
+                format: int32
+                type: integer
+              lastSchemaFetchTime:
+                description: |-
+                  LastSchemaFetchTime is when the provider schema last validated
+                  successfully.
+                format: date-time
+                type: string
               observedGeneration:
                 description: ObservedGeneration is the spec generation last reconciled.
                 format: int64

@@ -40,6 +40,9 @@ type PropertySchema struct {
 type ResourceSchema struct {
 	InputProperties map[string]PropertySchema `json:"inputProperties"`
 	RequiredInputs  []string                  `json:"requiredInputs"`
+	// Outputs are the resource's output properties — what
+	// references[].from.fieldPath addresses below "status.outputs.".
+	Outputs map[string]PropertySchema `json:"properties"`
 	// IsComponent marks component resources: they are orchestrated through
 	// an ephemeral engine (Construct) rather than stateless CRUD.
 	IsComponent bool `json:"isComponent"`

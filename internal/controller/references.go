@@ -87,6 +87,12 @@ func (r *DoResourceReconciler) resolveReferences(ctx context.Context, res *dov1a
 			return nil, fmt.Errorf("references[%d]: %w", i, err)
 		}
 		if !ok {
+			// Distinguish a not-yet-populated output from a typo that can
+			// never resolve: the provider's output schema fails the latter
+			// early — before any cloud call — instead of waiting forever.
+			if err := r.checkOutputPath(ctx, src, ref.From.FieldPath); err != nil {
+				return nil, fmt.Errorf("references[%d]: %w", i, err)
+			}
 			waiting = append(waiting, fmt.Sprintf("%s (%s not yet available)", ref.From.Name, ref.From.FieldPath))
 			continue
 		}
@@ -107,6 +113,39 @@ func expandTemplate(tpl, rendered string) string {
 	out := strings.ReplaceAll(tpl, "$${value}", literalMark)
 	out = strings.ReplaceAll(out, "${value}", rendered)
 	return strings.ReplaceAll(out, literalMark, "${value}")
+}
+
+// checkOutputPath validates a "status.outputs.*" fieldPath against the
+// source's provider output schema: an unknown first segment is a terminal
+// error (the reconcile surfaces it as InvalidReferences). Best effort — a
+// missing schema, empty output list, or the implicit "id" never fails.
+func (r *DoResourceReconciler) checkOutputPath(ctx context.Context, src *dov1alpha1.DoResource, fieldPath string) error {
+	rest, isOutput := strings.CutPrefix(fieldPath, "status.outputs.")
+	if !isOutput || rest == "" {
+		return nil
+	}
+	schema, err := r.Schemas.Get(ctx, schemaPackage(src.Spec.Package, src.Spec.Type), src.Spec.Type)
+	if err != nil {
+		return nil //nolint:nilerr // validation is best effort; resolution keeps waiting
+	}
+	outputs := schema.Resources[src.Spec.Type].Outputs
+	if len(outputs) == 0 {
+		return nil
+	}
+	first := rest
+	if i := strings.IndexAny(rest, ".["); i > 0 {
+		first = rest[:i]
+	}
+	if first == "id" {
+		// The provider-assigned id is part of every state document even
+		// though schemas rarely declare it.
+		return nil
+	}
+	if _, known := outputs[first]; !known {
+		return fmt.Errorf("fieldPath %q: output property %q does not exist in the schema of %s (%s@%s)",
+			fieldPath, first, src.Spec.Type, schema.Name, schema.Version)
+	}
+	return nil
 }
 
 // resolveFieldPath reads "status.id" or a "status.outputs.*" path from a

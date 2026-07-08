@@ -111,6 +111,10 @@ func (f *fakeRunner) FetchSchema(_ context.Context, _, token string) (*pulumido.
 					"length": {Type: "integer"},
 					"prefix": {Type: "string"},
 				},
+				Outputs: map[string]pulumido.PropertySchema{
+					"length": {Type: "integer"},
+					"prefix": {Type: "string"},
+				},
 			},
 		},
 	}, nil

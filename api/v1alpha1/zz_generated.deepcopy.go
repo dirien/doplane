@@ -449,6 +449,10 @@ func (in *DoProviderStatus) DeepCopyInto(out *DoProviderStatus) {
 		*out = new(ProviderPluginStatus)
 		**out = **in
 	}
+	if in.LastSchemaFetchTime != nil {
+		in, out := &in.LastSchemaFetchTime, &out.LastSchemaFetchTime
+		*out = (*in).DeepCopy()
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]metav1.Condition, len(*in))

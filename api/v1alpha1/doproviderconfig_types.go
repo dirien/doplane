@@ -26,6 +26,7 @@ import (
 // +kubebuilder:printcolumn:name="PACKAGE",type=string,JSONPath=`.spec.package`
 // +kubebuilder:printcolumn:name="READY",type=string,JSONPath=`.status.conditions[?(@.type=='Ready')].status`
 // +kubebuilder:printcolumn:name="REASON",type=string,JSONPath=`.status.conditions[?(@.type=='Ready')].reason`
+// +kubebuilder:printcolumn:name="DEPENDENTS",type=integer,JSONPath=`.status.dependents`
 // +kubebuilder:printcolumn:name="AGE",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // DoProviderConfig is the namespaced twin of the cluster-scoped DoProvider:

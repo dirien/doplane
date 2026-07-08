@@ -79,11 +79,36 @@ func (r *DoProviderReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		provider.Spec, &provider.Status, provider.Generation, r.RunnerNamespace); err != nil {
 		return ctrl.Result{}, err
 	}
+	if n, err := r.countDependents(ctx, dov1alpha1.ProviderKindCluster, provider.Name, ""); err == nil {
+		provider.Status.Dependents = n
+	}
 
 	if err := r.persistStatus(ctx, provider); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: providerResyncInterval}, nil
+}
+
+// countDependents counts the DoResources referencing a profile. Filtering
+// happens in memory — providers resync every 10 minutes, so the cost stays
+// bounded, and it works without field indexes (envtest).
+func (r *DoProviderReconciler) countDependents(ctx context.Context, kind, name, namespace string) (int32, error) {
+	var list dov1alpha1.DoResourceList
+	var opts []client.ListOption
+	if namespace != "" {
+		opts = append(opts, client.InNamespace(namespace))
+	}
+	if err := r.List(ctx, &list, opts...); err != nil {
+		return 0, err
+	}
+	var n int32
+	for i := range list.Items {
+		ref := list.Items[i].Spec.ProviderRef
+		if ref != nil && ref.Name == name && refKind(ref) == kind {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // validateProfile runs the shared profile checks (schema, plugin,
@@ -121,6 +146,8 @@ func (r *DoProviderReconciler) validateProfile(ctx context.Context, obj runtime.
 			pluginReadyMessage(r.PluginCachePath))
 		status.Package = &dov1alpha1.ProviderPackageStatus{Name: schema.Name, Version: schema.Version}
 		status.Plugin = &dov1alpha1.ProviderPluginStatus{Ready: true, CachePath: r.PluginCachePath}
+		now := metav1.Now()
+		status.LastSchemaFetchTime = &now
 	}
 
 	credsOK, credsErr := r.checkCredentials(ctx, spec, status, generation, secretNamespace)

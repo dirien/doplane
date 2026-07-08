@@ -100,6 +100,27 @@ var _ = Describe("DoProvider Controller", func() {
 		Expect(provider.Status.Plugin).NotTo(BeNil())
 		Expect(provider.Status.Plugin.Ready).To(BeTrue())
 		Expect(provider.Status.Plugin.CachePath).To(Equal("/var/lib/doplane/pulumi-home"))
+		Expect(provider.Status.LastSchemaFetchTime).NotTo(BeNil())
+	})
+
+	It("counts dependent resources", func() {
+		newProvider(dov1alpha1.DoProviderSpec{Package: "random@4.21.0"})
+		res := &dov1alpha1.DoResource{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "test-provider-dependent"},
+			Spec: dov1alpha1.DoResourceSpec{
+				Type:        "random:index/randomPet:RandomPet",
+				ProviderRef: &dov1alpha1.ProviderReference{Name: providerName},
+			},
+		}
+		Expect(k8sClient.Create(ctx, res)).To(Succeed())
+		DeferCleanup(func() {
+			res.Finalizers = nil
+			_ = k8sClient.Update(ctx, res)
+			_ = k8sClient.Delete(ctx, res)
+		})
+
+		provider := reconcileProvider()
+		Expect(provider.Status.Dependents).To(Equal(int32(1)))
 	})
 
 	It("reports SecretNotFound when the credentials Secret is missing", func() {

@@ -52,6 +52,9 @@ func (r *DoProviderConfigReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		config.Spec, &config.Status, config.Generation, config.Namespace); err != nil {
 		return ctrl.Result{}, err
 	}
+	if n, err := r.Profile.countDependents(ctx, dov1alpha1.ProviderKindConfig, config.Name, config.Namespace); err == nil {
+		config.Status.Dependents = n
+	}
 
 	if err := r.persistStatus(ctx, config); err != nil {
 		return ctrl.Result{}, err

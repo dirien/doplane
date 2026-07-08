@@ -103,6 +103,16 @@ type DoProviderStatus struct {
 	// +optional
 	Plugin *ProviderPluginStatus `json:"plugin,omitempty"`
 
+	// LastSchemaFetchTime is when the provider schema last validated
+	// successfully.
+	// +optional
+	LastSchemaFetchTime *metav1.Time `json:"lastSchemaFetchTime,omitempty"`
+
+	// Dependents counts the DoResources currently referencing this
+	// profile.
+	// +optional
+	Dependents int32 `json:"dependents,omitempty"`
+
 	// ObservedGeneration is the spec generation last reconciled.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -119,6 +129,7 @@ type DoProviderStatus struct {
 // +kubebuilder:printcolumn:name="PACKAGE",type=string,JSONPath=`.spec.package`
 // +kubebuilder:printcolumn:name="READY",type=string,JSONPath=`.status.conditions[?(@.type=='Ready')].status`
 // +kubebuilder:printcolumn:name="REASON",type=string,JSONPath=`.status.conditions[?(@.type=='Ready')].reason`
+// +kubebuilder:printcolumn:name="DEPENDENTS",type=integer,JSONPath=`.status.dependents`
 // +kubebuilder:printcolumn:name="AGE",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // DoProvider is a cluster-scoped, platform-team-owned provider profile:

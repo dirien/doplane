@@ -187,6 +187,32 @@ var _ = Describe("DoResource providerRef resolution", func() {
 		Expect(runner.created).To(BeEmpty())
 	})
 
+	It("fails early on a fieldPath typo instead of waiting forever", func() {
+		// The source exists but is not synced: the typo'd output can only
+		// be caught by the schema — before any cloud call.
+		source := &dov1alpha1.DoResource{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "test-refsource"},
+			Spec:       dov1alpha1.DoResourceSpec{Type: token},
+		}
+		Expect(k8sClient.Create(ctx, source)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, source) })
+
+		createResource(dov1alpha1.DoResourceSpec{
+			Type: token,
+			References: []dov1alpha1.Reference{{
+				ToPath: "prefix",
+				From:   dov1alpha1.ReferenceSource{Name: "test-refsource", FieldPath: "status.outputs.prefixx"},
+			}},
+		})
+
+		reconcileN(2)
+		cond := syncedCondition()
+		Expect(cond).NotTo(BeNil())
+		Expect(cond.Reason).To(Equal("InvalidReferences"))
+		Expect(cond.Message).To(ContainSubstring("prefixx"))
+		Expect(runner.created).To(BeEmpty())
+	})
+
 	It("resolves a namespaced DoProviderConfig in the resource's namespace", func() {
 		config := &dov1alpha1.DoProviderConfig{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: providerName},
