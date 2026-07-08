@@ -251,8 +251,13 @@ func trimSchema(raw []byte, token string) ([]byte, error) {
 // executeEngine runs one ephemeral-engine operation (component construct /
 // destroy) in the workspace.
 func (r *Runner) executeEngine(ctx context.Context, ws *workspace, op Op) Result {
-	// Resolve the package to a CLI-consumable source.
+	// Resolve the package to a CLI-consumable source. Components may rely
+	// on token inference just like the stateless path (spec.package is
+	// optional): `pulumi package add ""` would fail with EngineFailed.
 	pkgSrc := op.Package
+	if pkgSrc == "" {
+		pkgSrc = PackageForToken(op.Token)
+	}
 	if kind, apiPath := ClassifyPackageRef(op.Package); kind == PkgKindRegistry {
 		client, err := newRegistryClient()
 		if err != nil {

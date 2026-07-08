@@ -67,12 +67,13 @@ func IsSecretInputInID(err error) bool {
 	return errors.As(err, &coded) && coded.Code == runnerops.CodeSecretInputInID
 }
 
-// PackagePinned reports whether a package reference pins a version. Git and
-// private-registry references carry their own pinning scheme; only plain
-// references without "name@version" are unpinned (including an empty
-// reference, where the package is inferred from the type token).
+// PackagePinned reports whether a package reference pins a version. Git
+// sources pin through their URL/ref; plain and private-registry references
+// need an explicit "@version" — an unversioned registry ref resolves
+// versions/latest, which can change between operations. An empty reference
+// (package inferred from the type token) is unpinned.
 func PackagePinned(pkg string) bool {
-	if kind, _ := runnerops.ClassifyPackageRef(pkg); kind != runnerops.PkgKindPlain {
+	if kind, _ := runnerops.ClassifyPackageRef(pkg); kind == runnerops.PkgKindGit {
 		return true
 	}
 	return strings.Contains(pkg, "@")

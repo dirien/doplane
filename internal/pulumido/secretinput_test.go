@@ -18,6 +18,25 @@ package pulumido
 
 import "testing"
 
+func TestPackagePinned(t *testing.T) {
+	tests := []struct {
+		pkg  string
+		want bool
+	}{
+		{"aws@7.34.0", true},
+		{"aws", false},
+		{"", false},                           // inferred from the type token
+		{"private/org/pkg", false},            // registry: resolves versions/latest
+		{"private/org/pkg@1.2.3", true},       // registry with explicit version
+		{"https://github.com/org/repo", true}, // git pins via URL/ref
+	}
+	for _, tt := range tests {
+		if got := PackagePinned(tt.pkg); got != tt.want {
+			t.Errorf("PackagePinned(%q) = %t, want %t", tt.pkg, got, tt.want)
+		}
+	}
+}
+
 func TestSecretInputsPlan(t *testing.T) {
 	// Deterministic ordering matters: Job names hash the op document, so
 	// the same inputs must always produce the same mapping for adoption.
