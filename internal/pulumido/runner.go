@@ -59,6 +59,14 @@ func IsAlreadyExists(err error) bool {
 	return errors.As(err, &coded) && coded.Code == runnerops.CodeAlreadyExists
 }
 
+// IsSecretInputInID reports that the provider-assigned id embeds a secret
+// input value and was refused. Terminal: retrying re-runs the mutation and
+// orphans another external resource each time.
+func IsSecretInputInID(err error) bool {
+	var coded *CodedError
+	return errors.As(err, &coded) && coded.Code == runnerops.CodeSecretInputInID
+}
+
 // PackagePinned reports whether a package reference pins a version. Git and
 // private-registry references carry their own pinning scheme; only plain
 // references without "name@version" are unpinned (including an empty

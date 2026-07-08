@@ -96,8 +96,9 @@ func redactAny(v any, values []string) any {
 }
 
 // redactResult removes secret values from everything the envelope carries
-// back toward etcd, conditions and events. The ID is deliberately left
-// verbatim: later operations need it exactly as the provider issued it.
+// back toward etcd, conditions and events. The ID cannot be redacted —
+// later operations need it exactly as the provider issued it — so
+// guardSecretID rejects results whose ID embeds a secret instead.
 func redactResult(res *Result, values []string) {
 	if len(values) == 0 {
 		return
@@ -109,6 +110,21 @@ func redactResult(res *Result, values []string) {
 	if res.Outputs != nil {
 		res.Outputs, _ = redactAny(res.Outputs, values).(map[string]any)
 	}
+}
+
+// guardSecretID refuses to emit a provider-assigned id that embeds a
+// secret input value: the id would otherwise reach status.id, events and
+// logs verbatim (it cannot be redacted — later operations need it exactly).
+// Identity-forming properties (names, prefixes) must not come from
+// valuesFrom. The replacement failure carries no id and no value.
+func guardSecretID(res Result, values []string) Result {
+	if res.ID == "" || len(values) == 0 || redactString(res.ID, values) == res.ID {
+		return res
+	}
+	return failure(CodeSecretInputInID,
+		"the provider-assigned id embeds a secret input value and cannot be recorded; "+
+			"identity-forming properties (names, prefixes) must not come from valuesFrom. "+
+			"The external resource may have been created and can need manual cleanup")
 }
 
 // redactingWriter strips secret values from streamed output (pod logs /

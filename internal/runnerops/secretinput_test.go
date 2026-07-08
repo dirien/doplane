@@ -128,6 +128,33 @@ func TestRedaction(t *testing.T) {
 	})
 }
 
+func TestGuardSecretID(t *testing.T) {
+	values := []string{"s3cr3t"}
+
+	t.Run("an id embedding a secret is refused, without the value", func(t *testing.T) {
+		res := guardSecretID(Result{OK: true, ID: "s3cr3t-happy-cat"}, values)
+		if res.OK || res.Code != CodeSecretInputInID {
+			t.Fatalf("id with a secret must fail typed: %+v", res)
+		}
+		if res.ID != "" {
+			t.Errorf("the leaking id must not be emitted: %q", res.ID)
+		}
+		if strings.Contains(res.Message, "s3cr3t") {
+			t.Errorf("failure message leaked the value: %s", res.Message)
+		}
+	})
+
+	t.Run("clean ids pass through untouched", func(t *testing.T) {
+		res := guardSecretID(Result{OK: true, ID: "happy-cat"}, values)
+		if !res.OK || res.ID != "happy-cat" {
+			t.Fatalf("clean id must pass: %+v", res)
+		}
+		if res := guardSecretID(Result{OK: true, ID: "s3cr3t-ish"}, nil); !res.OK {
+			t.Fatal("no secret inputs means no guard")
+		}
+	})
+}
+
 func TestExecuteRejectsSecretInputsForEngineVerbs(t *testing.T) {
 	r := &Runner{PulumiBin: "true"}
 	res := r.Execute(t.Context(), Op{

@@ -21,6 +21,8 @@ import (
 	"errors"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -90,8 +92,22 @@ func (r *DoResourceReconciler) reconcileCreate(ctx context.Context, res *dov1alp
 			return result, err
 		}
 	}
+	// A recorded SecretInputInID failure for this generation is hard
+	// terminal: every additional create attempt orphans another external
+	// resource. Only a spec change may retry.
+	if cond := meta.FindStatusCondition(res.Status.Conditions, dov1alpha1.ConditionSynced); cond != nil &&
+		cond.Status == metav1.ConditionFalse && cond.Reason == "SecretInputInID" &&
+		cond.ObservedGeneration == res.Generation {
+		return ctrl.Result{}, nil
+	}
 	log.Info("creating external resource", "type", token)
 	id, state, err := r.Runner.Create(ctx, token, pkg, props)
+	if pulumido.IsSecretInputInID(err) {
+		// Terminal: a retry would run the create again and orphan another
+		// external resource. The spec must stop routing a secret into an
+		// identity-forming property.
+		return r.markSyncFailed(ctx, res, "SecretInputInID", err, false)
+	}
 	if err != nil {
 		return r.markSyncFailed(ctx, res, "CreateFailed", err, true)
 	}

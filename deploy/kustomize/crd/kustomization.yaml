@@ -5,6 +5,10 @@ resources:
 - bases/do.pulumi.com_doresources.yaml
 - bases/do.pulumi.com_docomposites.yaml
 - bases/do.pulumi.com_docompositedefinitions.yaml
+- bases/do.pulumi.com_docompositedefinitionrevisions.yaml
+- bases/do.pulumi.com_doproviders.yaml
+- bases/do.pulumi.com_doproviderconfigs.yaml
+- bases/do.pulumi.com_dousages.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

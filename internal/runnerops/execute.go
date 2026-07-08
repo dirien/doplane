@@ -134,7 +134,7 @@ func (r *Runner) Execute(ctx context.Context, op Op) Result {
 		_ = redactor.Flush()
 	}
 	redactResult(&res, secrets)
-	return res
+	return guardSecretID(res, secrets)
 }
 
 func (r *Runner) lookupEnv() func(string) (string, bool) {

@@ -57,6 +57,7 @@ const (
 	CodeSecretInputMissing     = "SecretInputMissing"
 	CodeReplacementRequired    = "ReplacementRequired"
 	CodeAlreadyExists          = "AlreadyExists"
+	CodeSecretInputInID        = "SecretInputInID"
 )
 
 // Op is the single JSON document describing one operation. It reaches the

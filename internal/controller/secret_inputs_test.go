@@ -143,6 +143,30 @@ var _ = Describe("DoResource secret input sources", func() {
 		Expect(runner.patched).To(HaveLen(1), "secret rotation must trigger a re-patch")
 	})
 
+	It("stops terminally when the provider id would embed a secret", func() {
+		runner.createErrs = []error{
+			&pulumido.CodedError{Code: "SecretInputInID", Message: "id embeds a secret input value"},
+			&pulumido.CodedError{Code: "SecretInputInID", Message: "id embeds a secret input value"},
+		}
+		Expect(k8sClient.Create(ctx, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: inputRefName},
+			Data:       map[string][]byte{"password": []byte("hunter2")},
+		})).To(Succeed())
+		createResource()
+
+		// Both reconciles must return nil errors (terminal, no retry — a
+		// retry would orphan another external resource per attempt).
+		reconcileN(3)
+
+		updated := &dov1alpha1.DoResource{}
+		Expect(k8sClient.Get(ctx, resourceKey, updated)).To(Succeed())
+		cond := meta.FindStatusCondition(updated.Status.Conditions, dov1alpha1.ConditionSynced)
+		Expect(cond).NotTo(BeNil())
+		Expect(cond.Reason).To(Equal("SecretInputInID"))
+		Expect(updated.Status.ID).To(BeEmpty(), "no leaking id may be persisted")
+		Expect(runner.createErrs).ToNot(BeEmpty(), "terminal condition must not re-run the create")
+	})
+
 	It("rejects valuesFrom on component resources", func() {
 		runner.componentMode = true
 		createResource()

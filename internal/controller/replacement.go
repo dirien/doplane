@@ -80,6 +80,10 @@ func (r *DoResourceReconciler) reconcileReplacement(ctx context.Context, res *do
 		// recorded id no longer resolves and the resource is recreated.
 		id, state, err = r.Runner.Create(ctx, token, pkg, props)
 	}
+	if pulumido.IsSecretInputInID(err) {
+		// Terminal: retries would orphan more external resources.
+		return r.markSyncFailed(ctx, res, "SecretInputInID", err, false)
+	}
 	if err != nil {
 		return r.markSyncFailed(ctx, res, "ReplaceFailed", err, true)
 	}
