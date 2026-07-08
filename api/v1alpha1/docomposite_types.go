@@ -42,6 +42,31 @@ type DoCompositeDefinitionSpec struct {
 	// Resources are the templates rendered into DoResources.
 	// +kubebuilder:validation:MinItems=1
 	Resources []CompositeResourceTemplate `json:"resources"`
+
+	// API exposes this definition as its own typed, namespaced CRD (e.g.
+	// `kind: StaticSite`): users apply the platform kind with their
+	// parameters as spec, instead of a generic DoComposite. Each typed
+	// object is translated into an owned DoComposite.
+	// +optional
+	API *CompositeAPI `json:"api,omitempty"`
+}
+
+// CompositeAPI describes the typed CRD generated for a definition.
+type CompositeAPI struct {
+	// Kind of the generated API (e.g. StaticSite).
+	// +kubebuilder:validation:Pattern=`^[A-Z][A-Za-z0-9]*$`
+	Kind string `json:"kind"`
+
+	// Plural resource name; defaults to lowercase(kind) + "s".
+	// +optional
+	Plural string `json:"plural,omitempty"`
+
+	// ParametersSchema is an OpenAPI v3 schema (JSONSchemaProps) validating
+	// the typed object's spec — the composite parameters. Empty accepts
+	// any object.
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	ParametersSchema *apiextensionsv1.JSON `json:"parametersSchema,omitempty"`
 }
 
 // CompositeResourceTemplate templates one DoResource of a composite.

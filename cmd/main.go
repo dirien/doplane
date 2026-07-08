@@ -30,6 +30,7 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -92,7 +93,78 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(dov1alpha1.AddToScheme(scheme))
+	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
+}
+
+// runnerConfig collects the runner-related flags.
+type runnerConfig struct {
+	mode                 string
+	image                string
+	namespace            string
+	namespaceMode        string
+	credentialsSecret    string
+	pluginCachePVC       string
+	pluginCacheMountPath string
+	pulumiBin            string
+	timeout              time.Duration
+}
+
+// newRunner builds the configured pulumi do executor: hardened Jobs
+// in-cluster, local exec for development.
+func newRunner(mgr ctrl.Manager, cfg runnerConfig) (pulumido.Runner, error) {
+	switch cfg.mode {
+	case "job":
+		if cfg.image == "" {
+			return nil, fmt.Errorf("runner-image (or RUNNER_IMAGE) is required in job mode")
+		}
+		if cfg.namespace == "" {
+			return nil, fmt.Errorf("runner-namespace (or POD_NAMESPACE) is required in job mode")
+		}
+		if cfg.namespaceMode != "operator" && cfg.namespaceMode != "resource" {
+			return nil, fmt.Errorf("invalid runner-namespace-mode %q, want 'operator' or 'resource'", cfg.namespaceMode)
+		}
+		clientset, err := kubernetes.NewForConfig(mgr.GetConfig())
+		if err != nil {
+			return nil, fmt.Errorf("creating clientset for runner jobs: %w", err)
+		}
+		setupLog.Info("using job runner", "image", cfg.image, "namespace", cfg.namespace, "namespace-mode", cfg.namespaceMode)
+		return &pulumido.JobRunner{
+			Clientset:            clientset,
+			Namespace:            cfg.namespace,
+			PerResourceNamespace: cfg.namespaceMode == "resource",
+			Image:                cfg.image,
+			CredentialsSecret:    cfg.credentialsSecret,
+			PluginCachePVC:       cfg.pluginCachePVC,
+			PluginCacheMountPath: cfg.pluginCacheMountPath,
+			Timeout:              cfg.timeout,
+		}, nil
+	case "exec":
+		clientset, err := kubernetes.NewForConfig(mgr.GetConfig())
+		if err != nil {
+			return nil, fmt.Errorf("creating clientset for secret resolution: %w", err)
+		}
+		setupLog.Info("using exec runner", "pulumi", cfg.pulumiBin)
+		return &pulumido.ExecRunner{
+			PulumiBin: cfg.pulumiBin,
+			Timeout:   cfg.timeout,
+			// Dev mode has no Job env injection: resolve valuesFrom Secrets
+			// directly (in the resource's namespace).
+			ResolveSecret: func(ctx context.Context, namespace, name, key string) (string, error) {
+				secret, err := clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+				if err != nil {
+					return "", err
+				}
+				value, ok := secret.Data[key]
+				if !ok {
+					return "", fmt.Errorf("secret %s/%s has no key %q", namespace, name, key)
+				}
+				return string(value), nil
+			},
+		}, nil
+	default:
+		return nil, fmt.Errorf("invalid runner-mode %q, want 'job' or 'exec'", cfg.mode)
+	}
 }
 
 func main() {
@@ -283,65 +355,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	var runner pulumido.Runner
-	switch runnerMode {
-	case "job":
-		if runnerImage == "" {
-			setupLog.Error(nil, "runner-image (or RUNNER_IMAGE) is required in job mode")
-			os.Exit(1)
-		}
-		if runnerNamespace == "" {
-			setupLog.Error(nil, "runner-namespace (or POD_NAMESPACE) is required in job mode")
-			os.Exit(1)
-		}
-		if runnerNamespaceMode != "operator" && runnerNamespaceMode != "resource" {
-			setupLog.Error(nil, "invalid runner-namespace-mode, want 'operator' or 'resource'",
-				"runner-namespace-mode", runnerNamespaceMode)
-			os.Exit(1)
-		}
-		clientset, err := kubernetes.NewForConfig(mgr.GetConfig())
-		if err != nil {
-			setupLog.Error(err, "unable to create clientset for runner jobs")
-			os.Exit(1)
-		}
-		runner = &pulumido.JobRunner{
-			Clientset:            clientset,
-			Namespace:            runnerNamespace,
-			PerResourceNamespace: runnerNamespaceMode == "resource",
-			Image:                runnerImage,
-			CredentialsSecret:    credentialsSecret,
-			PluginCachePVC:       pluginCachePVC,
-			PluginCacheMountPath: pluginCacheMountPath,
-			Timeout:              runnerTimeout,
-		}
-		setupLog.Info("using job runner", "image", runnerImage, "namespace", runnerNamespace,
-			"namespace-mode", runnerNamespaceMode)
-	case "exec":
-		clientset, err := kubernetes.NewForConfig(mgr.GetConfig())
-		if err != nil {
-			setupLog.Error(err, "unable to create clientset for secret resolution")
-			os.Exit(1)
-		}
-		runner = &pulumido.ExecRunner{
-			PulumiBin: pulumiBin,
-			Timeout:   runnerTimeout,
-			// Dev mode has no Job env injection: resolve valuesFrom Secrets
-			// directly (in the resource's namespace).
-			ResolveSecret: func(ctx context.Context, namespace, name, key string) (string, error) {
-				secret, err := clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
-				if err != nil {
-					return "", err
-				}
-				value, ok := secret.Data[key]
-				if !ok {
-					return "", fmt.Errorf("secret %s/%s has no key %q", namespace, name, key)
-				}
-				return string(value), nil
-			},
-		}
-		setupLog.Info("using exec runner", "pulumi", pulumiBin)
-	default:
-		setupLog.Error(nil, "invalid runner-mode, want 'job' or 'exec'", "runner-mode", runnerMode)
+	runner, err := newRunner(mgr, runnerConfig{
+		mode:                 runnerMode,
+		image:                runnerImage,
+		namespace:            runnerNamespace,
+		namespaceMode:        runnerNamespaceMode,
+		credentialsSecret:    credentialsSecret,
+		pluginCachePVC:       pluginCachePVC,
+		pluginCacheMountPath: pluginCacheMountPath,
+		pulumiBin:            pulumiBin,
+		timeout:              runnerTimeout,
+	})
+	if err != nil {
+		setupLog.Error(err, "unable to configure the runner")
 		os.Exit(1)
 	}
 
@@ -361,6 +387,7 @@ func main() {
 	if pluginCachePVC != "" {
 		providerCachePath = pluginCacheMountPath
 	}
+	typedRegistrar := &controller.TypedRegistrar{Manager: mgr}
 	providerReconciler := &controller.DoProviderReconciler{
 		Client:          mgr.GetClient(),
 		Live:            mgr.GetAPIReader(),
@@ -369,6 +396,7 @@ func main() {
 		Schemas:         schemas,
 		RunnerNamespace: runnerNamespace,
 		PluginCachePath: providerCachePath,
+		Typed:           typedRegistrar,
 	}
 	if err := providerReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DoProvider")
@@ -378,6 +406,15 @@ func main() {
 		Profile: providerReconciler,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DoProviderConfig")
+		os.Exit(1)
+	}
+	if err := (&controller.DoCompositeDefinitionReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("doplane"),
+		Typed:    typedRegistrar,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "DoCompositeDefinition")
 		os.Exit(1)
 	}
 	if err := (&controller.DoCompositeReconciler{

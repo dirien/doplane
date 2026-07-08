@@ -35,6 +35,14 @@ rules:
   - get
   - update
 - apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions
+  verbs:
+  - create
+  - get
+  - update
+- apiGroups:
   - batch
   resources:
   - jobs
@@ -95,4 +103,22 @@ rules:
   - docomposites/finalizers
   - doresources/finalizers
   verbs:
+  - update
+- apiGroups:
+  - typed.do.pulumi.com
+  resources:
+  - '*'
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - typed.do.pulumi.com
+  resources:
+  - '*/status'
+  verbs:
+  - get
+  - patch
   - update

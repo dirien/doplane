@@ -61,6 +61,9 @@ type DoProviderReconciler struct {
 	// PluginCachePath is the shared plugin cache mount in runner pods
 	// ("" when the cache is disabled).
 	PluginCachePath string
+	// Typed generates CRDs for spec.typedResources and runs their
+	// translation controllers (nil disables typed APIs, e.g. in tests).
+	Typed *TypedRegistrar
 }
 
 // +kubebuilder:rbac:groups=do.pulumi.com,resources=doproviders,verbs=get;list;watch
@@ -82,11 +85,40 @@ func (r *DoProviderReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if n, err := r.countDependents(ctx, dov1alpha1.ProviderKindCluster, provider.Name, ""); err == nil {
 		provider.Status.Dependents = n
 	}
+	if r.Typed != nil && len(provider.Spec.TypedResources) > 0 {
+		if err := r.ensureTypedResources(ctx, provider); err != nil {
+			r.Recorder.Eventf(provider, "Warning", "TypedAPIFailed", "%s", compact(err.Error()))
+			setProfileCondition(&provider.Status, provider.Generation, "TypedAPIsReady", metav1.ConditionFalse,
+				"TypedAPIFailed", compact(err.Error()))
+		} else {
+			setProfileCondition(&provider.Status, provider.Generation, "TypedAPIsReady", metav1.ConditionTrue,
+				"TypedAPIsReady", fmt.Sprintf("%d typed APIs served in %s", len(provider.Spec.TypedResources), typedGroup))
+		}
+	}
 
 	if err := r.persistStatus(ctx, provider); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: providerResyncInterval}, nil
+}
+
+// ensureTypedResources generates one CRD per typed token from the
+// provider's schema and starts the translation controllers.
+func (r *DoProviderReconciler) ensureTypedResources(ctx context.Context, provider *dov1alpha1.DoProvider) error {
+	for _, token := range provider.Spec.TypedResources {
+		schema, err := r.Schemas.Get(pulumido.WithOwner(ctx, "doprovider/"+provider.Name), provider.Spec.Package, token)
+		if err != nil {
+			return fmt.Errorf("schema for %s: %w", token, err)
+		}
+		crd, err := typedResourceCRD(token, schema)
+		if err != nil {
+			return err
+		}
+		if err := r.Typed.EnsureResourceAPI(ctx, crd, token, provider.Name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // countDependents counts the DoResources referencing a profile. Filtering

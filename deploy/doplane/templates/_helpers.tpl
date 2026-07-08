@@ -128,6 +128,12 @@ ClusterRole (cluster-wide install) or into a Role per watched namespace
     - create
     - update
 - apiGroups:
+    - ""
+  resources:
+    - persistentvolumeclaims
+  verbs:
+    - get
+- apiGroups:
     - batch
   resources:
     - jobs
@@ -151,10 +157,29 @@ ClusterRole (cluster-wide install) or into a Role per watched namespace
     - do.pulumi.com
   resources:
     - doproviderconfigs
+    - dousages
   verbs:
     - get
     - list
     - watch
+- apiGroups:
+    - typed.do.pulumi.com
+  resources:
+    - '*'
+  verbs:
+    - get
+    - list
+    - watch
+    - update
+    - patch
+- apiGroups:
+    - typed.do.pulumi.com
+  resources:
+    - '*/status'
+  verbs:
+    - get
+    - update
+    - patch
 - apiGroups:
     - do.pulumi.com
   resources:
@@ -182,6 +207,23 @@ Manager permissions on cluster-scoped resources (DoCompositeDefinition) —
 required in both install shapes.
 */}}
 {{- define "doplane.managerClusterRules" -}}
+- apiGroups:
+    - apiextensions.k8s.io
+  resources:
+    - customresourcedefinitions
+  verbs:
+    - get
+    - create
+    - update
+- apiGroups:
+    - do.pulumi.com
+  resources:
+    - docompositedefinitionrevisions
+  verbs:
+    - get
+    - list
+    - watch
+    - create
 - apiGroups:
     - do.pulumi.com
   resources:

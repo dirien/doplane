@@ -57,6 +57,30 @@ spec:
               so\nordering, readiness gating, propagation and ordered teardown are
               handled\nby the resource graph engine. \"$${\" escapes a literal \"${\"."
             properties:
+              api:
+                description: |-
+                  API exposes this definition as its own typed, namespaced CRD (e.g.
+                  `kind: StaticSite`): users apply the platform kind with their
+                  parameters as spec, instead of a generic DoComposite. Each typed
+                  object is translated into an owned DoComposite.
+                properties:
+                  kind:
+                    description: Kind of the generated API (e.g. StaticSite).
+                    pattern: ^[A-Z][A-Za-z0-9]*$
+                    type: string
+                  parametersSchema:
+                    description: |-
+                      ParametersSchema is an OpenAPI v3 schema (JSONSchemaProps) validating
+                      the typed object's spec — the composite parameters. Empty accepts
+                      any object.
+                    x-kubernetes-preserve-unknown-fields: true
+                  plural:
+                    description: Plural resource name; defaults to lowercase(kind)
+                      + "s".
+                    type: string
+                required:
+                - kind
+                type: object
               requiredParameters:
                 description: |-
                   RequiredParameters lists parameter keys every DoComposite using this

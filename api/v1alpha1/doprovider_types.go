@@ -69,6 +69,14 @@ type DoProviderSpec struct {
 	// allows every resource of the package.
 	// +optional
 	AllowedResources []string `json:"allowedResources,omitempty"`
+
+	// TypedResources lists full resource tokens
+	// ("aws:s3/bucketV2:BucketV2") to expose as generated, typed CRDs in
+	// the typed.do.pulumi.com group: app teams then apply `kind: BucketV2`
+	// with schema validation and kubectl explain, never a Pulumi token.
+	// Each typed object is translated into an owned DoResource.
+	// +optional
+	TypedResources []string `json:"typedResources,omitempty"`
 }
 
 // ProviderPackageStatus reports the resolved package coordinates.
