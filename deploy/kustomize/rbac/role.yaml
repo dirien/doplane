@@ -49,6 +49,7 @@ rules:
   - docompositedefinitions
   - doproviderconfigs
   - doproviders
+  - dousages
   verbs:
   - get
   - list

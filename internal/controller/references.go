@@ -31,6 +31,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	dov1alpha1 "github.com/dirien/doplane/api/v1alpha1"
 	"github.com/dirien/doplane/internal/pulumido"
@@ -169,7 +170,12 @@ func (r *DoResourceReconciler) blockingDependents(ctx context.Context, res *dov1
 	if err != nil {
 		return nil, err
 	}
-	blocking := make([]string, 0, len(deps))
+	usages, err := r.blockingUsages(ctx, res)
+	if err != nil {
+		return nil, err
+	}
+	blocking := make([]string, 0, len(deps)+len(usages))
+	blocking = append(blocking, usages...)
 	for _, name := range deps {
 		dep := &dov1alpha1.DoResource{}
 		if err := r.Get(ctx, types.NamespacedName{Namespace: res.Namespace, Name: name}, dep); err != nil {
@@ -188,6 +194,42 @@ func (r *DoResourceReconciler) blockingDependents(ctx context.Context, res *dov1
 		blocking = append(blocking, name)
 	}
 	return blocking, nil
+}
+
+// blockingUsages lists DoUsage objects declaring res in use: explicit
+// deletion protection for consumers outside the reference graph (e.g. an
+// application namespace using a shared database). A usage that is itself
+// terminating no longer blocks.
+func (r *DoResourceReconciler) blockingUsages(ctx context.Context, res *dov1alpha1.DoResource) ([]string, error) {
+	var list dov1alpha1.DoUsageList
+	if err := r.List(ctx, &list, client.InNamespace(res.Namespace)); err != nil {
+		return nil, err
+	}
+	blocking := make([]string, 0, len(list.Items))
+	for i := range list.Items {
+		usage := &list.Items[i]
+		if usage.Spec.Of.Name != res.Name || !usage.DeletionTimestamp.IsZero() {
+			continue
+		}
+		entry := fmt.Sprintf("usage %q", usage.Name)
+		if usage.Spec.Reason != "" {
+			entry = fmt.Sprintf("usage %q (%s)", usage.Name, usage.Spec.Reason)
+		}
+		blocking = append(blocking, entry)
+	}
+	return blocking, nil
+}
+
+// mapUsageTarget re-enqueues the DoResource a DoUsage protects — usage
+// deletion is what unblocks a pending teardown.
+func (r *DoResourceReconciler) mapUsageTarget(_ context.Context, obj client.Object) []reconcile.Request {
+	usage, ok := obj.(*dov1alpha1.DoUsage)
+	if !ok || usage.Spec.Of.Name == "" {
+		return nil
+	}
+	return []reconcile.Request{{
+		NamespacedName: types.NamespacedName{Namespace: usage.Namespace, Name: usage.Spec.Of.Name},
+	}}
 }
 
 // reaches reports whether res transitively references target.

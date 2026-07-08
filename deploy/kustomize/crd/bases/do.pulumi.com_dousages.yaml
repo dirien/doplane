@@ -1,0 +1,88 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: dousages.do.pulumi.com
+spec:
+  group: do.pulumi.com
+  names:
+    kind: DoUsage
+    listKind: DoUsageList
+    plural: dousages
+    shortNames:
+    - douse
+    singular: dousage
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.of.name
+      name: OF
+      type: string
+    - jsonPath: .spec.reason
+      name: REASON
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: AGE
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          DoUsage blocks deletion of a DoResource that is in use even when no
+          spec.references edge exists — the platform-team equivalent of
+          Crossplane's Usage. While any DoUsage targets a resource, its external
+          teardown is refused (Ready=False / BlockedByDependents); deleting the
+          usage unblocks it.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              DoUsageSpec declares that a DoResource is in use by something outside
+              the reference graph.
+            properties:
+              of:
+                description: |-
+                  Of names the DoResource (same namespace) whose deletion is blocked
+                  while this usage exists.
+                properties:
+                  name:
+                    description: Name of the DoResource in this namespace.
+                    minLength: 1
+                    type: string
+                    x-kubernetes-validations:
+                    - message: spec.of.name is immutable
+                      rule: self == oldSelf
+                required:
+                - name
+                type: object
+              reason:
+                description: |-
+                  Reason documents who or what depends on the resource, e.g.
+                  "database is used by the payments namespace". Surfaced in the
+                  blocked resource's conditions.
+                type: string
+            required:
+            - of
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources: {}

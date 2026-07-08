@@ -75,6 +75,7 @@ type DoResourceReconciler struct {
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods/log,verbs=get
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;update
+// +kubebuilder:rbac:groups=do.pulumi.com,resources=dousages,verbs=get;list;watch
 
 // Reconcile drives the external resource toward spec:
 // create when no id is recorded, patch when the spec generation changed,
@@ -508,6 +509,8 @@ func (r *DoResourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// for every resource referencing them.
 		Watches(&dov1alpha1.DoProvider{}, handler.EnqueueRequestsFromMapFunc(r.mapProviderResources)).
 		Watches(&dov1alpha1.DoProviderConfig{}, handler.EnqueueRequestsFromMapFunc(r.mapProviderConfigResources)).
+		// Usage deletion unblocks a pending teardown of its target.
+		Watches(&dov1alpha1.DoUsage{}, handler.EnqueueRequestsFromMapFunc(r.mapUsageTarget)).
 		// Reconciles block on runner Jobs for tens of seconds; allow a few
 		// objects in flight. The same object is never reconciled concurrently.
 		WithOptions(controller.Options{MaxConcurrentReconciles: 4}).
