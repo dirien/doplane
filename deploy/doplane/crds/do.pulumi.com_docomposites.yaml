@@ -68,6 +68,28 @@ spec:
               parameters:
                 description: Parameters feed the definition's ${params.*} expressions.
                 x-kubernetes-preserve-unknown-fields: true
+              revisionRef:
+                description: |-
+                  RevisionRef pins rendering to one specific
+                  DoCompositeDefinitionRevision, overriding updatePolicy.
+                properties:
+                  name:
+                    description: Name of the revision (e.g. "static-site-v3").
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              updatePolicy:
+                default: Automatic
+                description: |-
+                  UpdatePolicy decides whether definition edits roll out to this
+                  instance: Automatic follows the latest revision; Manual keeps the
+                  revision recorded at first render until revisionRef moves it.
+                enum:
+                - Automatic
+                - Manual
+                type: string
             required:
             - definition
             type: object
@@ -166,6 +188,10 @@ spec:
                   - resourceName
                   type: object
                 type: array
+              revision:
+                description: Revision names the DoCompositeDefinitionRevision last
+                  rendered.
+                type: string
             type: object
         type: object
     served: true

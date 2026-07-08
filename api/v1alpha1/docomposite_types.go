@@ -109,6 +109,17 @@ type DoCompositeDefinitionList struct {
 	Items           []DoCompositeDefinition `json:"items"`
 }
 
+// UpdatePolicy controls how a composite follows definition edits.
+type UpdatePolicy string
+
+const (
+	// UpdateAutomatic tracks the definition's latest revision.
+	UpdateAutomatic UpdatePolicy = "Automatic"
+	// UpdateManual stays on the recorded (or explicitly pinned) revision
+	// until a human moves it.
+	UpdateManual UpdatePolicy = "Manual"
+)
+
 // DoCompositeSpec instantiates a DoCompositeDefinition.
 type DoCompositeSpec struct {
 	// Definition is the name of the cluster-scoped DoCompositeDefinition
@@ -120,6 +131,26 @@ type DoCompositeSpec struct {
 	// +optional
 	// +kubebuilder:pruning:PreserveUnknownFields
 	Parameters *apiextensionsv1.JSON `json:"parameters,omitempty"`
+
+	// UpdatePolicy decides whether definition edits roll out to this
+	// instance: Automatic follows the latest revision; Manual keeps the
+	// revision recorded at first render until revisionRef moves it.
+	// +kubebuilder:validation:Enum=Automatic;Manual
+	// +kubebuilder:default=Automatic
+	// +optional
+	UpdatePolicy UpdatePolicy `json:"updatePolicy,omitempty"`
+
+	// RevisionRef pins rendering to one specific
+	// DoCompositeDefinitionRevision, overriding updatePolicy.
+	// +optional
+	RevisionRef *RevisionReference `json:"revisionRef,omitempty"`
+}
+
+// RevisionReference names a DoCompositeDefinitionRevision.
+type RevisionReference struct {
+	// Name of the revision (e.g. "static-site-v3").
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
 }
 
 // CompositeResourceStatus reports one child resource of a composite.
@@ -146,6 +177,10 @@ type DoCompositeStatus struct {
 	// rendered as "ready/total".
 	// +optional
 	ReadyResources string `json:"readyResources,omitempty"`
+
+	// Revision names the DoCompositeDefinitionRevision last rendered.
+	// +optional
+	Revision string `json:"revision,omitempty"`
 
 	// ObservedGeneration is the composite generation last rendered.
 	// +optional

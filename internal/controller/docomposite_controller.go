@@ -92,7 +92,20 @@ func (r *DoCompositeReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	r.updateDefinitionUsage(ctx, def)
 
-	children, err := renderComposite(comp, def)
+	// Render from the revision the instance's update policy selects: a
+	// definition edit only reaches Automatic instances (and pinned ones
+	// once a human moves their revisionRef).
+	revision, err := r.resolveRevision(ctx, comp, def)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return r.markCompositeFailed(ctx, comp, "RevisionNotFound", err)
+		}
+		return ctrl.Result{}, err
+	}
+	effective := def.DeepCopy()
+	effective.Spec = *revision.Spec.Definition.DeepCopy()
+
+	children, err := renderComposite(comp, effective)
 	if err != nil {
 		return r.markCompositeFailed(ctx, comp, "RenderFailed", err)
 	}
@@ -153,6 +166,7 @@ func (r *DoCompositeReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	comp.Status.Resources = statuses
 	comp.Status.ReadyResources = fmt.Sprintf("%d/%d", ready, len(children))
+	comp.Status.Revision = revision.Name
 	comp.Status.ObservedGeneration = comp.Generation
 	setCompositeCondition(comp, dov1alpha1.ConditionSynced, metav1.ConditionTrue, "Synced", "definition rendered and children applied")
 	switch {

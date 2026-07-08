@@ -47,6 +47,15 @@ rules:
 - apiGroups:
   - do.pulumi.com
   resources:
+  - docompositedefinitionrevisions
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+- apiGroups:
+  - do.pulumi.com
+  resources:
   - docompositedefinitions
   - doproviderconfigs
   - doproviders
