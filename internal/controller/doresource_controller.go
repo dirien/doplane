@@ -97,6 +97,19 @@ func (r *DoResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	pkg := res.Spec.Package
 	token := res.Spec.Type
 
+	// crossplane.io/paused suspends every cloud operation, including
+	// deletion; removing the annotation resumes reconciliation (annotation
+	// changes re-trigger reconcile via the controller's predicates).
+	if paused(res) {
+		log.Info("reconciliation paused via annotation")
+		setCondition(res, dov1alpha1.ConditionSynced, metav1.ConditionFalse, "ReconcilePaused",
+			"reconciliation is paused via the crossplane.io/paused annotation")
+		if err := r.persistStatus(ctx, res); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
 	// Resolve the provider profile first: teardown needs the provider's
 	// credentials Secret just as much as creation does.
 	ctx, pkg, halt, err := r.resolveProvider(ctx, res, pkg, token)
@@ -184,13 +197,7 @@ func (r *DoResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	switch {
 	case res.Status.ID == "":
-		log.Info("creating external resource", "type", token)
-		id, state, err := r.Runner.Create(ctx, token, pkg, props)
-		if err != nil {
-			return r.markSyncFailed(ctx, res, "CreateFailed", err, true)
-		}
-		r.Recorder.Eventf(res, "Normal", "Created", "Created external resource %s %q", token, id)
-		return r.markSynced(ctx, res, id, state, hash)
+		return r.reconcileCreate(ctx, res, token, pkg, props, hash)
 
 	case res.Status.AppliedHash != hash:
 		log.Info("updating external resource", "type", token, "id", res.Status.ID)
@@ -355,7 +362,12 @@ func (r *DoResourceReconciler) markSynced(ctx context.Context, res *dov1alpha1.D
 		r.Recorder.Eventf(res, "Warning", "ConnectionSecretFailed", "%s", compact(err.Error()))
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{RequeueAfter: resyncInterval}, nil
+	interval, ok := pollInterval(res, resyncInterval)
+	if !ok {
+		r.Recorder.Eventf(res, "Warning", "InvalidPollInterval",
+			"cannot parse the crossplane.io/poll-interval annotation; using the default %s", resyncInterval)
+	}
+	return ctrl.Result{RequeueAfter: interval}, nil
 }
 
 // markSyncFailed records a failure condition. When retryOp is true the error
@@ -479,12 +491,14 @@ func (r *DoResourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 	return ctrl.NewControllerManagedBy(mgr).
-		// Generation-gated: our own status writes must not re-trigger the
-		// object's reconcile, or a provider with volatile outputs turns
-		// every drift read into a self-sustaining loop of read Jobs.
-		// Deletion bumps the generation; periodic drift reads come from
-		// RequeueAfter in markSynced.
-		For(&dov1alpha1.DoResource{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		// Generation- and annotation-gated: our own status writes must not
+		// re-trigger the object's reconcile, or a provider with volatile
+		// outputs turns every drift read into a self-sustaining loop of
+		// read Jobs. Deletion bumps the generation; periodic drift reads
+		// come from RequeueAfter in markSynced; annotation changes admit
+		// the lifecycle annotations (paused, reconcile-requested-at, …).
+		For(&dov1alpha1.DoResource{}, builder.WithPredicates(
+			predicate.Or(predicate.GenerationChangedPredicate{}, predicate.AnnotationChangedPredicate{}))).
 		Named("doresource").
 		// Any DoResource event (including status-only changes) also wakes
 		// its graph neighbors: dependents (value propagation, readiness
