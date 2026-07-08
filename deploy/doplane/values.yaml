@@ -40,9 +40,11 @@ runner:
 pluginCache:
   # -- Enable the shared writable plugin cache: runner Jobs mount a PVC and
   # install pinned provider plugins there on first use, so new providers
-  # need YAML changes only — no runner image rebuild. Jobs running outside
-  # the release namespace (runner.namespaceMode=resource) skip the cache,
-  # since PVC references are namespace-local.
+  # need YAML changes only — no runner image rebuild. PVC references are
+  # namespace-local: with runner.namespaceMode=resource, tenant-namespace
+  # Jobs mount a claim of the same name in their own namespace when one
+  # exists (pre-create it per tenant), and fall back to baked plugins plus
+  # on-demand downloads otherwise.
   enabled: false
   # -- Create the PersistentVolumeClaim. Set false to manage it yourself.
   create: true

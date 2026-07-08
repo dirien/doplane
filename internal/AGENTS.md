@@ -14,16 +14,24 @@ reconcilers. Controllers depend on pulumido **only** through the
 ## Key Files
 | File | Purpose |
 |------|---------|
-| `pulumido/runner.go` | `Runner` interface, shared arg building, CLI-output parsing (`lastJSONObject`), error sentinels (`ErrNotFound`, `ErrReadNotSupported`, `ErrOutputUnavailable`), provider-error classification (`providerErrorText` + `classifyText` — matches only provider `error:` lines, never echoed commands) |
-| `pulumido/job.go` | `JobRunner`: one hardened K8s Job per operation. Deterministic Job names from `WithOwner(ctx, …)` → interrupted operations are **adopted** on retry, never re-run; Jobs deleted only after their result is secured |
-| `pulumido/exec.go` | `ExecRunner` for `make run` (dev); kills the whole process group on timeout so provider plugins can't outlive it |
+| `pulumido/runner.go` | `Runner` interface, error sentinels (`ErrNotFound`, `ErrReadNotSupported`, `ErrOutputUnavailable`), `CodedError` helpers (`IsReplacementRequired`, `IsAlreadyExists`, `IsSecretInputInID`), `PackagePinned` |
+| `pulumido/job.go` | `JobRunner`: one hardened K8s Job per operation. Deterministic Job names from `WithOwner(ctx, …)` → interrupted operations are **adopted** on retry, never re-run; ctx tags for tenant namespace (`WithNamespace`), provider credentials (`WithCredentialsSecret`); terminating-namespace teardown fallback; per-namespace plugin-cache mounts |
+| `pulumido/exec.go` | `ExecRunner` for `make run` (dev); `ResolveSecret` hook for valuesFrom |
 | `pulumido/schema.go` | Registry schema fetch + cache with singleflight; `Validate` checks `spec.properties` against `inputProperties`/`requiredInputs` |
-| `pulumido/pcl.go` | JSON → PCL serializer for `pulumi do --input-file` (escapes `${` / `%{`) |
-| `pulumido/path.go` | Dot/bracket path parser: `a.b[2]`, quoted `tags["dotted.key"]` segments; `SetPath` / `GetPath` / `AppendKeySegment` |
-| `controller/doresource_controller.go` | DoResource reconcile: create/patch/read/delete via Runner; hash-based propagation (`status.appliedHash`); live API reads; `persistStatus` detached from cancellation; `GenerationChangedPredicate` on `For()` |
-| `controller/references.go` | Graph engine: reference resolution, readiness gating, dependents lookup, blocking teardown (terminating/cycle tie-breaks), cycle detection |
+| `pulumido/secretinput.go` | `SecretInput` plan + ctx tag: deterministic path→env mapping for valuesFrom |
+| `runnerops/plugincache.go` | Shared plugin cache: locked one-time installs (`DOPLANE_PLUGIN_CACHE`), stale-lock breaking |
+| `runnerops/secretinput.go` | valuesFrom substitution + redaction (stream, state, message) + `guardSecretID` |
+| `runnerops/path.go` | Dot/bracket path parser: `SetPath` / `GetPath` / `RenderScalar` (aliased from pulumido) |
+| `controller/doresource_controller.go` | DoResource reconcile: create/patch/read/delete via Runner; hash-based propagation (`status.appliedHash`); live API reads; `persistStatus` detached from cancellation; generation+annotation predicates |
+| `controller/annotations.go` | Crossplane lifecycle annotations: external-name adopt/persist (crash window), paused, poll-interval; `reconcileCreate` |
+| `controller/replacement.go` | Replacement safety: protect/approval gates, create-before-delete with DBC fallback |
+| `controller/provider_resolution.go` | providerRef resolution (DoProvider / namespaced DoProviderConfig), allow-list, indexes |
+| `controller/doprovider_controller.go` | Profile validation (schema/plugin/credentials), dependents count, typed-CRD generation trigger |
+| `controller/connection_secret.go` / `secret_inputs.go` | writeConnectionSecretToRef publishing; valuesFrom staging + rotation hash |
+| `controller/references.go` | Graph engine: reference resolution + output-schema path validation, readiness gating, blocking teardown (dependents + DoUsage), cycle detection |
 | `controller/composite_render.go` | Expression compiler: `${params.*}`, `${self.*}`, `${resources.*}` → child DoResources; sibling refs compile into `spec.references`; `$${` escapes; unterminated `${` is a render error |
-| `controller/docomposite_controller.go` | Composite expansion, owner-checked pruning, child replacement on immutable type change, status roll-up |
+| `controller/docomposite_controller.go` | Composite expansion, owner-checked pruning, child replacement on immutable type change, status roll-up; renders from revisions (`composite_revision.go`) |
+| `controller/typed_crd.go` / `typed_controllers.go` | Generated typed CRDs (`typed.do.pulumi.com`) + dynamic translation controllers (`TypedRegistrar`) |
 <!-- AGENTS-GENERATED:END filemap -->
 
 <!-- AGENTS-GENERATED:START golden-samples -->

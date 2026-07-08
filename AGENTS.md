@@ -107,8 +107,9 @@
 > Source: go-conventions
 
 ### Internal Packages (compiler-enforced)
-- `internal/pulumido` — `pulumi do` execution layer (Runner interface, Job/exec runners, schema cache, PCL/paths). Knows nothing about controllers.
-- `internal/controller` — reconcilers (DoResource graph engine, DoComposite renderer). Talks to pulumido only through the `Runner` interface.
+- `internal/runnerops` — the typed operation layer both runners execute (op/result envelopes, plugin cache, secret substitution + redaction, PCL/paths). Knows nothing about pulumido or controllers.
+- `internal/pulumido` — `pulumi do` execution layer (Runner interface, Job/exec runners, schema cache, ctx tags for tenancy/credentials/secret plans). Knows nothing about controllers.
+- `internal/controller` — reconcilers (DoResource graph engine, provider profiles, composites + revisions, typed-CRD translation). Talks to pulumido only through the `Runner` interface.
 - `api/v1alpha1` — CRD types only; no behavior beyond validation markers.
 
 ### Invariants (do not break)

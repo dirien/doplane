@@ -175,12 +175,13 @@ from the profile, a conflicting `spec.package` is rejected
 `ResourceNotAllowed`.
 
 **Tenant-owned profiles**: the namespaced `DoProviderConfig` is the twin of
-the cluster-scoped `DoProvider` — same spec, but its credentials Secret is
-checked in the config's own namespace, so teams pin versions and rotate
-credentials without platform involvement. Resources select it with
-`providerRef: {name: x, kind: DoProviderConfig}` (resolved in the
-resource's namespace). Per-tenant credential isolation at runtime requires
-`runner.namespaceMode: resource`.
+the cluster-scoped `DoProvider` — same spec, owned by the team. Resources
+select it with `providerRef: {name: x, kind: DoProviderConfig}` (resolved
+in the resource's namespace). Its credentials Secret is validated in the
+namespace runner Jobs actually load it from: the config's own namespace
+with `runner.namespaceMode: resource` (full tenant ownership — teams pin
+versions and rotate credentials without platform involvement), the
+operator's runner namespace in the default `operator` mode.
 
 ### Writable plugin cache
 
@@ -242,8 +243,11 @@ the Job spec; the kubelet injects the value into the runner pod (from the
 Secret in the Job's namespace), the runner substitutes it just before the
 provider call, and every output channel — streamed logs, error messages,
 recorded state — is redacted. Rotating the Secret re-patches the resource
-(its resourceVersion is folded into the applied hash). Not supported for
-component resources, whose engine checkpoint would persist the value.
+(its resourceVersion is folded into the applied hash). Two hard limits:
+component resources are rejected (their engine checkpoint would persist
+the value), and identity-forming properties (names, prefixes) must not
+come from `valuesFrom` — a provider-assigned id embedding the value cannot
+be redacted, so the operation stops terminally with `SecretInputInID`.
 
 **Connection secrets** (`spec.writeConnectionSecretToRef` +
 `spec.connectionDetails`) publish selected outputs and static values into a

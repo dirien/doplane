@@ -19,11 +19,14 @@ All five phases are implemented, with these deviations:
   deployment-level knob (`pluginCache.*` Helm values /
   `deploy/kustomize/plugin-cache` overlay); a per-provider mode had no
   consumer. CRD surface is easy to add later, hard to remove.
-- **Credentials Secrets are checked in the runner namespace** (DoProvider is
-  cluster-scoped; in per-resource-namespace runner mode tenant Secrets are
-  resolved at operation time instead and cannot be pre-validated).
-- **Runner Jobs outside the operator namespace skip the cache mount** — PVC
-  references are namespace-local.
+- **Credentials Secrets are checked in the namespace runner Jobs load them
+  from**: the runner namespace for cluster-scoped DoProviders; for
+  namespaced DoProviderConfigs, the config's namespace in per-resource
+  runner mode and the runner namespace otherwise.
+- **The plugin cache PVC is namespace-local**: operator-namespace Jobs
+  always mount it; tenant-namespace Jobs mount a same-named claim in their
+  own namespace when one exists, and otherwise fall back to baked plugins
+  plus on-demand downloads.
 - Phase 5 is the developer script `hack/provider-help.sh`.
 
 ## Target UX

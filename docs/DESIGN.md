@@ -130,18 +130,20 @@ against AWS (see `examples/`):
   can still wedge namespaces in `Terminating` if a dependent's cloud delete
   fails persistently. Needs an escape hatch (timeout, `force-delete`
   annotation) with an explicit orphaning contract.
-- **fieldPath validity**: `status.outputs` paths are stringly-typed;
-  typos surface only at reconcile. Consider validating against the
-  resource's output schema at admission.
+- ~~**fieldPath validity**~~ *(done)*: unresolved `status.outputs.*` paths
+  are validated against the source's provider output schema at reconcile —
+  typos fail early as `InvalidReferences` before any cloud call (best
+  effort; admission-time validation remains a possible refinement).
 - ~~**Template/expression escaping**~~ *(done)*: `$${` escapes literals in
   composite expressions, `$${value}` escapes the reference-template
   placeholder, unterminated `${` is a render error, and map keys containing
   path metacharacters use bracket-quoted path segments.
 - **Cross-namespace references**: allowed? If yes, RBAC story for reading
   other namespaces' status and the blast-radius implications.
-- **Approval UX** (#8, #9): who approves `ReplacementRequired` at 3am; is
-  approval an annotation, a CLI, or integration with something like
-  Kargo/Argo.
+- **Approval UX** (#8, #9) *(partially done)*: replacement approval is the
+  `do.pulumi.com/approve-replacement=<generation>` annotation (plus
+  `spec.protect: false` for opt-out); revision rollout is `updatePolicy` +
+  `revisionRef`. Open: richer approval integrations (CLI, Kargo/Argo).
 - **CRD regeneration safety**: in-place schema updates on provider upgrade
   can invalidate stored objects; needs served/storage version policy and
   possibly conversion webhooks.
