@@ -199,6 +199,40 @@ paths for `spec.references`, example YAML:
 ./hack/provider-help.sh digitalocean@4.73.0 digitalocean:index/droplet:Droplet
 ```
 
+### Typed APIs (no Pulumi tokens for app teams)
+
+`DoProvider.spec.typedResources` turns listed tokens into generated,
+schema-validated CRDs in the `typed.do.pulumi.com` group — app teams apply
+`kind: BucketV2` with `spec.forProvider`, get `kubectl explain`, printer
+columns and per-kind RBAC; each typed object is translated into an owned
+DoResource. Likewise, a `DoCompositeDefinition` with `spec.api` serves a
+platform API (`kind: StaticSite`) whose spec is the composite's
+parameters, optionally validated by `spec.api.parametersSchema`.
+
+## Day-2 operations
+
+- **Lifecycle annotations** (Crossplane-compatible):
+  `crossplane.io/external-name` adopts an existing external resource and
+  is persisted right after every create (closing the create/status crash
+  window); `crossplane.io/paused: "true"` suspends all cloud calls;
+  `crossplane.io/poll-interval: 1m` overrides the 10m drift read;
+  bumping `crossplane.io/reconcile-requested-at` wakes a settled resource.
+- **Deletion protection**: a `DoUsage` object blocks teardown of a
+  DoResource in use outside the reference graph ("database is used by the
+  payments namespace") until the usage is deleted.
+- **Replacement safety**: updates that hit an immutable input stop with
+  `ReplacementRequired` until approved
+  (`do.pulumi.com/approve-replacement: "<generation>"`) or the resource is
+  explicitly `spec.protect: false`; approved swaps run
+  create-before-delete where identity allows, delete-before-create
+  otherwise.
+- **Composite revisions**: every definition edit snapshots an immutable
+  `DoCompositeDefinitionRevision`; composites follow
+  `spec.updatePolicy: Automatic|Manual` or pin `spec.revisionRef`, so
+  fleet-wide template edits never roll out silently.
+- **Warm runner path**: designed (not yet built) for high fan-out updates
+  — see `docs/RUNNER_SERVICE_DESIGN.md`.
+
 ## Secrets in and out
 
 **Secret inputs** (`spec.valuesFrom`) inject Secret values into properties

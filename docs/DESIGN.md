@@ -23,9 +23,14 @@ against AWS (see `examples/`):
   pruned; status rolls up per child. **Deviation:** definition edits
   re-render all instances immediately — the decided revision/rollout
   machinery (#9) is future work, acceptable at current fleet sizes.
-- Not yet implemented: typed CRDs + Provider CR (#1, #4), replacement
-  engine & protect flags (#7, #8), writable plugin-cache volume (#10), gRPC
-  runner (#11).
+- **Since then (2026-07-08)** most of the remaining decisions landed:
+  Provider CR with runtime typed-CRD generation (#1, #4 —
+  `DoProvider.typedResources` + `DoCompositeDefinition.api`), replacement
+  engine with protect flags and approval (#7, #8), composite revisions with
+  update policy (#9), the writable plugin-cache volume (#10), and
+  readiness gating (#12). The gRPC runner (#11) is designed
+  (`docs/RUNNER_SERVICE_DESIGN.md`) but not built — Jobs remain the only
+  executor.
 
 ## The twelve decisions
 
