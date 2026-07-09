@@ -50,6 +50,12 @@ type Runner struct {
 	// os.LookupEnv (the Job path). Dev mode injects resolved values here
 	// instead of polluting the process environment.
 	LookupEnv func(string) (string, bool)
+	// redactSecrets holds the resolved secret input values to strip from the
+	// child's streamed output. Set per operation by Execute (never by the
+	// caller); each of the child's two output streams gets its own redactor
+	// over a shared sink so a secret can neither race on nor split across the
+	// two os/exec copy goroutines.
+	redactSecrets []string
 }
 
 func (r *Runner) bin() string {
@@ -113,11 +119,7 @@ func (r *Runner) Execute(ctx context.Context, op Op) Result {
 		return failure(CodeSecretInputMissing, "%v", err)
 	}
 	run := *r
-	var redactor *redactingWriter
-	if len(secrets) > 0 {
-		redactor = newRedactingWriter(r.progress(), secrets)
-		run.Progress = redactor
-	}
+	run.redactSecrets = secrets
 
 	var res Result
 	switch op.Verb {
@@ -129,9 +131,6 @@ func (r *Runner) Execute(ctx context.Context, op Op) Result {
 		res = run.executeEngine(ctx, ws, op)
 	default:
 		res = failure(CodeInvalidSpec, "unknown verb %q", op.Verb)
-	}
-	if redactor != nil {
-		_ = redactor.Flush()
 	}
 	redactResult(&res, secrets)
 	return guardSecretID(res, secrets)
@@ -369,13 +368,35 @@ func (r *Runner) runEnv(ctx context.Context, dir string, env []string, args ...s
 	cmd.WaitDelay = 10 * time.Second
 
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = io.MultiWriter(&stdout, r.progress())
-	cmd.Stderr = io.MultiWriter(&stderr, r.progress())
-	if err := cmd.Run(); err != nil {
+	outProgress, errProgress, flush := r.progressWriters()
+	cmd.Stdout = io.MultiWriter(&stdout, outProgress)
+	cmd.Stderr = io.MultiWriter(&stderr, errProgress)
+	runErr := cmd.Run()
+	flush()
+	if runErr != nil {
 		combined := strings.TrimSpace(stderr.String() + "\n" + stdout.String())
-		return stdout.String(), fmt.Errorf("%w: %s", err, Truncate(combined, 4000))
+		return stdout.String(), fmt.Errorf("%w: %s", runErr, Truncate(combined, 4000))
 	}
 	return stdout.String(), nil
+}
+
+// progressWriters returns the writers for the child's stdout and stderr human
+// output plus a flush to run once the child exits. Without secret inputs both
+// are the raw progress sink. With secret inputs each stream gets its OWN
+// line-buffering redactor over a shared, mutex-guarded sink: os/exec copies
+// stdout and stderr on two separate goroutines, so a single shared redactor
+// would both race on its buffer and let a secret split across the two streams'
+// interleaved writes escape substring redaction. Independent per-stream
+// buffers keep each provider line intact; the sink serializes the writes.
+func (r *Runner) progressWriters() (out, errw io.Writer, flush func()) {
+	dst := r.progress()
+	if len(r.redactSecrets) == 0 {
+		return dst, dst, func() {}
+	}
+	sink := &syncWriter{w: dst}
+	outR := newRedactingWriter(sink, r.redactSecrets)
+	errR := newRedactingWriter(sink, r.redactSecrets)
+	return outR, errR, func() { _ = outR.Flush(); _ = errR.Flush() }
 }
 
 // classifyDoFailure turns a failed `pulumi do` invocation into a typed

@@ -17,7 +17,9 @@ limitations under the License.
 package runnerops
 
 import (
+	"io"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -82,32 +84,31 @@ func TestApplySecretInputs(t *testing.T) {
 func TestRedaction(t *testing.T) {
 	values := []string{"s3cr3t"}
 
-	t.Run("result state, outputs and message are scrubbed", func(t *testing.T) {
+	t.Run("the message is scrubbed but structured outputs round-trip verbatim", func(t *testing.T) {
 		res := Result{
 			Message: "provider said: s3cr3t is invalid",
 			State: map[string]any{
 				"password": "s3cr3t",
 				"url":      "postgres://app:s3cr3t@db:5432/x",
-				"nested":   map[string]any{"list": []any{"s3cr3t", 42}},
 			},
 			Outputs: map[string]any{"token": "s3cr3t"},
 		}
 		redactResult(&res, values)
+		// The message reaches conditions/events, so it must be scrubbed.
 		if strings.Contains(res.Message, "s3cr3t") {
 			t.Errorf("message leaked: %s", res.Message)
 		}
-		if res.State["password"] != redactedMark {
-			t.Errorf("state.password = %v", res.State["password"])
+		// State/Outputs are deliberately left intact: a provider echoing a
+		// valuesFrom input must round-trip so writeConnectionSecretToRef
+		// publishes the real credential, not "(redacted)".
+		if res.State["password"] != "s3cr3t" {
+			t.Errorf("state.password must round-trip verbatim, got %v", res.State["password"])
 		}
-		if res.State["url"] != "postgres://app:"+redactedMark+"@db:5432/x" {
-			t.Errorf("substring not redacted: %v", res.State["url"])
+		if res.State["url"] != "postgres://app:s3cr3t@db:5432/x" {
+			t.Errorf("state.url must round-trip verbatim, got %v", res.State["url"])
 		}
-		nested := res.State["nested"].(map[string]any)["list"].([]any)
-		if nested[0] != redactedMark || nested[1] != 42 {
-			t.Errorf("nested redaction: %v", nested)
-		}
-		if res.Outputs["token"] != redactedMark {
-			t.Errorf("outputs leaked: %v", res.Outputs)
+		if res.Outputs["token"] != "s3cr3t" {
+			t.Errorf("outputs.token must round-trip verbatim, got %v", res.Outputs["token"])
 		}
 	})
 
@@ -126,6 +127,41 @@ func TestRedaction(t *testing.T) {
 			t.Errorf("expected redaction marks: %q", out)
 		}
 	})
+}
+
+// TestProgressWritersConcurrentRedaction reproduces the runner's real
+// stdout+stderr wiring: os/exec copies the two streams on separate goroutines,
+// so the redaction writers must neither race on a shared buffer nor let a
+// secret split across the streams. Run under -race.
+func TestProgressWritersConcurrentRedaction(t *testing.T) {
+	const secret = "s3cr3tP@ssw0rd"
+	var sink strings.Builder
+	r := &Runner{Progress: &sink, redactSecrets: []string{secret}}
+	out, errw, flush := r.progressWriters()
+
+	var wg sync.WaitGroup
+	writeLoop := func(w io.Writer, tag string) {
+		defer wg.Done()
+		for range 500 {
+			// Split the secret across two writes within one line: a shared
+			// line buffer would let the other stream's newline split it so
+			// substring redaction misses, leaking the value verbatim.
+			_, _ = io.WriteString(w, tag+" "+secret[:5])
+			_, _ = io.WriteString(w, secret[5:]+" trailing\n")
+		}
+	}
+	wg.Add(2)
+	go writeLoop(out, "stdout")
+	go writeLoop(errw, "stderr")
+	wg.Wait()
+	flush()
+
+	if got := sink.String(); strings.Contains(got, secret) {
+		t.Fatalf("secret leaked into streamed output")
+	}
+	if !strings.Contains(sink.String(), redactedMark) {
+		t.Fatalf("expected redaction marks in output")
+	}
 }
 
 func TestGuardSecretID(t *testing.T) {
@@ -151,6 +187,16 @@ func TestGuardSecretID(t *testing.T) {
 		}
 		if res := guardSecretID(Result{OK: true, ID: "s3cr3t-ish"}, nil); !res.OK {
 			t.Fatal("no secret inputs means no guard")
+		}
+	})
+
+	t.Run("a short low-entropy value coincidentally in an id is not guarded", func(t *testing.T) {
+		// A single-digit valuesFrom value happens to appear in a numeric
+		// provider id. Tripping here would discard a valid id and orphan the
+		// just-created resource, so a value below the length floor is ignored.
+		res := guardSecretID(Result{OK: true, ID: "301234561"}, []string{"1"})
+		if !res.OK || res.ID != "301234561" {
+			t.Fatalf("short coincidental match must not orphan a created resource: %+v", res)
 		}
 	})
 }

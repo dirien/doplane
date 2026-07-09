@@ -22,6 +22,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // redactedMark replaces secret input values wherever they would otherwise
@@ -73,44 +74,33 @@ func redactString(s string, values []string) string {
 	return s
 }
 
-// redactAny walks a decoded JSON value, redacting secret values inside
-// every string (including substrings, e.g. connection URLs embedding a
-// password).
-func redactAny(v any, values []string) any {
-	switch t := v.(type) {
-	case string:
-		return redactString(t, values)
-	case []any:
-		for i := range t {
-			t[i] = redactAny(t[i], values)
-		}
-		return t
-	case map[string]any:
-		for k := range t {
-			t[k] = redactAny(t[k], values)
-		}
-		return t
-	default:
-		return v
-	}
-}
-
-// redactResult removes secret values from everything the envelope carries
-// back toward etcd, conditions and events. The ID cannot be redacted —
-// later operations need it exactly as the provider issued it — so
-// guardSecretID rejects results whose ID embeds a secret instead.
+// redactResult removes secret values from the human-facing message the
+// envelope carries toward conditions and events.
+//
+// res.State and res.Outputs are deliberately NOT redacted. A provider that
+// echoes a valuesFrom input into its outputs must round-trip the real value,
+// or writeConnectionSecretToRef would publish the literal "(redacted)" into
+// the connection Secret and silently break the consuming workload. Structured
+// outputs are already sensitive-adjacent in etcd — provider-generated secrets
+// land there unredacted too — so the disclosure boundaries that stay enforced
+// are the streamed log (redactingWriter), this message, and guardSecretID
+// (which still refuses an id embedding a secret, since an id cannot be
+// redacted without breaking later operations that need it verbatim).
 func redactResult(res *Result, values []string) {
 	if len(values) == 0 {
 		return
 	}
 	res.Message = redactString(res.Message, values)
-	if res.State != nil {
-		res.State, _ = redactAny(res.State, values).(map[string]any)
-	}
-	if res.Outputs != nil {
-		res.Outputs, _ = redactAny(res.Outputs, values).(map[string]any)
-	}
 }
+
+// minGuardedSecretLen is the shortest secret value guardSecretID treats as
+// "embedded" in a provider id. Below it a substring match is far more likely
+// coincidental (a digit, a short region code, a boolean) than the secret
+// truly forming the id, and tripping would discard a valid id and orphan a
+// successfully created cloud resource. Genuinely identity-forming secrets
+// clear this bar; short values must simply not be routed into identity
+// properties.
+const minGuardedSecretLen = 6
 
 // guardSecretID refuses to emit a provider-assigned id that embeds a
 // secret input value: the id would otherwise reach status.id, events and
@@ -118,7 +108,16 @@ func redactResult(res *Result, values []string) {
 // Identity-forming properties (names, prefixes) must not come from
 // valuesFrom. The replacement failure carries no id and no value.
 func guardSecretID(res Result, values []string) Result {
-	if res.ID == "" || len(values) == 0 || redactString(res.ID, values) == res.ID {
+	if res.ID == "" {
+		return res
+	}
+	guarded := make([]string, 0, len(values))
+	for _, v := range values {
+		if len(v) >= minGuardedSecretLen {
+			guarded = append(guarded, v)
+		}
+	}
+	if len(guarded) == 0 || redactString(res.ID, guarded) == res.ID {
 		return res
 	}
 	return failure(CodeSecretInputInID,
@@ -170,4 +169,19 @@ func (w *redactingWriter) Flush() error {
 	w.buf.Reset()
 	_, err := io.WriteString(w.dst, redactString(rest, w.values))
 	return err
+}
+
+// syncWriter serializes concurrent writes to an underlying writer. The two
+// per-stream redactors of one operation share a syncWriter so their whole-line
+// writes to the pod log / dev console never interleave mid-line or race — the
+// destination (os.Stderr, a buffer, …) need not be safe for concurrent use.
+type syncWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
 }
