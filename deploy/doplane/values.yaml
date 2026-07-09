@@ -6,8 +6,9 @@ image:
   fullName: ""
   # -- Manager image repository.
   repository: controller
-  # -- Manager image tag.
-  tag: latest
+  # -- Manager image tag. Empty defaults to the chart appVersion (a pinned
+  # release) rather than a mutable "latest" that IfNotPresent would run stale.
+  tag: ""
   # -- Manager image digest. Takes precedence over tag when set.
   digest: ""
   # -- Manager image pull policy.
@@ -22,6 +23,10 @@ runnerImage:
   tag: dev
   # -- Runner image digest. Takes precedence over tag when set.
   digest: ""
+  # -- Runner container pull policy ("Always"/"IfNotPresent"/"Never"). Empty
+  # lets Kubernetes default it; set "Always" with a mutable runner tag so a
+  # re-pushed fix is not masked by a node's cached image layer.
+  pullPolicy: ""
 
 # -- Namespaces the operator reconciles (namespace-scoped deployment).
 # Empty watches the whole cluster. When set, manager RBAC shrinks to
@@ -109,6 +114,14 @@ metrics:
     scrapeTimeout: ""
     path: /metrics
     scheme: https
+    # -- Full tlsConfig for the metrics endpoint. When set (e.g. serverName +
+    # a ca secret from a cert-manager serving cert), it REPLACES the insecure
+    # default below so Prometheus verifies the metrics server certificate.
+    tlsConfig: {}
+    # -- Skip TLS verification of the metrics endpoint. Insecure: an in-cluster
+    # MITM can capture the scrape bearer token. Prefer configuring tlsConfig
+    # above with a real CA; this stays true only as the no-serving-cert
+    # fallback.
     insecureSkipVerify: true
     bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
     metricRelabelings: []

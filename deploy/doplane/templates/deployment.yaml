@@ -51,6 +51,10 @@ spec:
               value: {{ include "doplane.runnerImage" . | quote }}
             - name: RUNNER_NAMESPACE_MODE
               value: {{ .Values.runner.namespaceMode | quote }}
+            {{- with .Values.runnerImage.pullPolicy }}
+            - name: RUNNER_IMAGE_PULL_POLICY
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .Values.watchNamespaces }}
             - name: WATCH_NAMESPACES
               value: {{ join "," . | quote }}

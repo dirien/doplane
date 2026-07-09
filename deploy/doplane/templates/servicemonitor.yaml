@@ -30,7 +30,11 @@ spec:
       scrapeTimeout: {{ . }}
       {{- end }}
       tlsConfig:
+        {{- if .Values.metrics.serviceMonitor.tlsConfig }}
+        {{- toYaml .Values.metrics.serviceMonitor.tlsConfig | nindent 8 }}
+        {{- else }}
         insecureSkipVerify: {{ .Values.metrics.serviceMonitor.insecureSkipVerify }}
+        {{- end }}
       {{- with .Values.metrics.serviceMonitor.metricRelabelings }}
       metricRelabelings:
         {{- toYaml . | nindent 8 }}

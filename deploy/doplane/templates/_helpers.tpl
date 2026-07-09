@@ -224,6 +224,7 @@ required in both install shapes.
     - list
     - watch
     - create
+    - delete
 - apiGroups:
     - do.pulumi.com
   resources:
@@ -258,7 +259,11 @@ Build an image reference from fullName, repository, tag, and digest fields.
 {{- end -}}
 
 {{- define "doplane.managerImage" -}}
+{{- if and (not .Values.image.fullName) (not .Values.image.digest) (not .Values.image.tag) -}}
+{{- printf "%s:%s" .Values.image.repository .Chart.AppVersion -}}
+{{- else -}}
 {{- include "doplane.imageRef" .Values.image -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "doplane.runnerImage" -}}

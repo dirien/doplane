@@ -19,6 +19,6 @@ annotations:
   artifacthub.io/license: Apache-2.0
   artifacthub.io/images: |
     - name: manager
-      image: controller:latest
+      image: controller:0.0.1
     - name: runner
       image: doplane-runner:dev
