@@ -1,0 +1,21 @@
+# Level 12a - expose a Pulumi component package as a generated typed CRD.
+#
+# Apply this first, then wait for the generated WebAppComponent CRD before
+# applying 13-typed-private-registry-component.yaml:
+#
+#   kubectl apply -f examples/12-typed-private-registry-component-provider.yaml
+#   kubectl wait doprovider typed-web-app --for=condition=Ready --timeout=2m
+#   kubectl wait --for=condition=Established crd/webappcomponents.typed.do.pulumi.com --timeout=2m
+#
+# Prerequisites:
+#   INCLUDE_PULUMI_TOKEN=1 INCLUDE_KIND_KUBECONFIG=1 ./hack/sync-creds.sh
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoProvider
+metadata:
+  name: typed-web-app
+spec:
+  package: private/ediri/web-app
+  allowedResources:
+    - web-app:index:WebAppComponent
+  typedResources:
+    - web-app:index:WebAppComponent

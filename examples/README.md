@@ -19,6 +19,7 @@ the registry token and a kubeconfig for the runner:
 | 9 | `09-provider-profile.yaml` | `DoProvider` profile: platform-pinned package, allow-list enforcement, `providerRef` on raw resources — no cloud account needed |
 | 10 | `10-cataloged-composite.yaml` | the full provider UX: profile + cataloged composite hiding tokens, versions and wiring from app teams — no cloud account needed |
 | 11 | `11-secrets-in-and-out.yaml` | `valuesFrom` secret inputs (value never in etcd/logs, redacted outputs) + `writeConnectionSecretToRef` connection secret — no cloud account needed |
+| 12 | `12-typed-private-registry-component-provider.yaml` + `13-typed-private-registry-component.yaml` | component package schema exposed as a generated typed CRD; typed object drives the component engine |
 
 Generated help for any resource type (required/optional inputs, reference
 paths, example YAML):
@@ -80,4 +81,12 @@ kubectl get dores integer-not-allowed        # SYNCED False / ResourceNotAllowed
 # Cataloged composite: app teams see parameters only.
 kubectl apply -f examples/10-cataloged-composite.yaml
 kubectl get docomposite payments-identity -w # 2/2 READY
+
+# Typed component API: platform registers the component package, then app
+# teams apply the generated WebAppComponent kind.
+kubectl apply -f examples/12-typed-private-registry-component-provider.yaml
+kubectl wait doprovider typed-web-app --for=condition=Ready --timeout=2m
+kubectl wait --for=condition=Established crd/webappcomponents.typed.do.pulumi.com --timeout=2m
+kubectl apply -f examples/13-typed-private-registry-component.yaml
+kubectl get webappcomponents.typed.do.pulumi.com typed-private-web-app -w
 ```

@@ -45,17 +45,23 @@ manager ──(runner selection)──▶ JobRunner            (default, per-op 
 
 The Job runner's contracts, restated as service requirements:
 
-- **At-most-once mutations.** Jobs get adoption via deterministic names.
-  The service equivalent: `Execute` is keyed by the same owner+op hash
-  (idempotency key); the runner keeps a small completed-results LRU so a
-  manager retry after a dropped connection re-reads the result instead of
-  re-running the mutation. `ErrOutputUnavailable` semantics stay identical.
+- **At-most-once mutations.** Jobs get adoption via deterministic names
+  (salted with the input Secrets' resourceVersions so a rotation is never
+  masked by adopting a stale-value completed Job). A finished *mutation* Job
+  is retained long enough to survive an operator outage — its pod log is the
+  only record of the cloud change until the manager consumes it — while reads
+  are GC'd promptly. The service equivalent: `Execute` is keyed by the same
+  owner+op hash (idempotency key); the runner keeps a small completed-results
+  LRU so a manager retry after a dropped connection re-reads the result
+  instead of re-running the mutation. `ErrOutputUnavailable` semantics stay
+  identical.
 - **Secret input isolation.** Jobs get kubelet-injected env. The service
   cannot (secrets vary per operation): the manager sends Secret
   *references*; the runner pod resolves them via its own service account,
   scoped by RBAC to named secrets in the runner namespace. Values still
-  never transit the manager, and the existing redaction (progress writer,
-  result state) applies unchanged.
+  never transit the manager, and the existing redaction (progress writer and
+  error message) applies unchanged; structured result state/outputs round-trip
+  verbatim so `writeConnectionSecretToRef` carries real credentials.
 - **Credential scoping.** One service per provider means one credentials
   Secret per service (envFrom, as Jobs do today). Per-resource-namespace
   credential isolation is incompatible with a shared warm process — tenant

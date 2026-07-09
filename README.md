@@ -206,7 +206,12 @@ paths for `spec.references`, example YAML:
 schema-validated CRDs in the `typed.do.pulumi.com` group — app teams apply
 `kind: BucketV2` with `spec.forProvider`, get `kubectl explain`, printer
 columns and per-kind RBAC; each typed object is translated into an owned
-DoResource. Likewise, a `DoCompositeDefinition` with `spec.api` serves a
+DoResource. Component resources work the same way: if the Pulumi package
+schema marks the token as `isComponent`, the generated kind is still backed
+by a DoResource, but the resource controller uses the component engine path
+and stores the checkpoint on the mirror's `status.engineState`.
+
+Likewise, a `DoCompositeDefinition` with `spec.api` serves a
 platform API (`kind: StaticSite`) whose spec is the composite's
 parameters, optionally validated by `spec.api.parametersSchema`.
 
@@ -241,9 +246,13 @@ without the value ever being stored anywhere visible: only a placeholder
 and a path→env-var mapping travel through the controller, the object and
 the Job spec; the kubelet injects the value into the runner pod (from the
 Secret in the Job's namespace), the runner substitutes it just before the
-provider call, and every output channel — streamed logs, error messages,
-recorded state — is redacted. Rotating the Secret re-patches the resource
-(its resourceVersion is folded into the applied hash). Two hard limits:
+provider call, and the leak-prone channels — streamed logs and error
+messages — are redacted. Structured `status.outputs`/state are left intact so
+a provider that echoes an input round-trips the real value into a connection
+Secret rather than `"(redacted)"`; treat status as sensitive-adjacent (see
+below). Rotating the Secret re-patches the resource (its resourceVersion is
+folded into both the applied hash and the runner Job name, so a rotation
+cannot adopt a stale-value completed Job). Two hard limits:
 component resources are rejected (their engine checkpoint would persist
 the value), and identity-forming properties (names, prefixes) must not
 come from `valuesFrom` — a provider-assigned id embedding the value cannot
@@ -366,10 +375,12 @@ make run      # run the manager locally in exec mode (uses your pulumi login/env
   (which is stored verbatim in etcd and echoed by the CLI).
 - `status.outputs` stores what `pulumi do` prints. Secret-flagged outputs
   are masked by the CLI (the operator never passes `--show-secrets`), and
-  `valuesFrom` values are redacted from state and logs — but treat status
-  as sensitive-adjacent: anything else a provider returns unflagged lands
-  in etcd verbatim. Use `writeConnectionSecretToRef` to publish selected
-  outputs into a Secret instead of reading them from status.
+  `valuesFrom` values are redacted from logs and error messages — but NOT
+  from `status.outputs`/state (so connection secrets round-trip real values).
+  Treat status as sensitive-adjacent: a `valuesFrom` value a provider echoes
+  into its outputs, and anything else a provider returns unflagged, lands in
+  etcd verbatim. Use `writeConnectionSecretToRef` to publish selected outputs
+  into a Secret instead of reading them from status.
 
 ## License
 

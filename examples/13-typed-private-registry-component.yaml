@@ -1,0 +1,13 @@
+# Level 12b - consume the generated typed component CRD.
+#
+# Apply examples/12-typed-private-registry-component-provider.yaml first and
+# wait for webappcomponents.typed.do.pulumi.com to become Established.
+apiVersion: typed.do.pulumi.com/v1alpha1
+kind: WebAppComponent
+metadata:
+  name: typed-private-web-app
+spec:
+  forProvider:
+    replicas: 2
+    labels:
+      example: level-12

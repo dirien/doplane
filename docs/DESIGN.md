@@ -154,9 +154,16 @@ against AWS (see `examples/`):
   ideally uses read-only cloud credentials, distinct from mutate creds.
 - ~~**Secret inputs**~~ *(done)*: `spec.valuesFrom` injects Secret values
   via kubelet env into runner pods; placeholder + mapping only in the
-  object/op, redaction on all output channels, rotation via
-  resourceVersion-mixed applied hash. Components excluded (checkpoint
-  would persist values).
+  object/op. Redaction covers the streamed log and the error message; the
+  provider-assigned id is guarded (`SecretInputInID`, length-thresholded to
+  avoid coincidental false positives) since it cannot be redacted without
+  breaking later ops. Structured `status.outputs`/state are deliberately NOT
+  redacted, so a provider that echoes an input round-trips the real value into
+  `writeConnectionSecretToRef` instead of publishing `"(redacted)"` — outputs
+  are already sensitive-adjacent in etcd, as provider-generated secrets are.
+  Rotation mixes the Secret resourceVersion into both the applied hash and the
+  runner Job name, so a rotated op re-patches and cannot adopt a stale-value
+  completed Job. Components excluded (checkpoint would persist values).
 
 ## Suggested build order (risk-first)
 
