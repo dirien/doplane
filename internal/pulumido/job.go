@@ -80,7 +80,9 @@ func WithCredentialsSecret(ctx context.Context, name string) context.Context {
 	return context.WithValue(ctx, credentialsCtxKey{}, name)
 }
 
-func credentialsFromContext(ctx context.Context) string {
+// CredentialsSecretFromContext returns the Secret name set by
+// WithCredentialsSecret ("" when untagged).
+func CredentialsSecretFromContext(ctx context.Context) string {
 	name, _ := ctx.Value(credentialsCtxKey{}).(string)
 	return name
 }
@@ -97,9 +99,29 @@ func WithNamespace(ctx context.Context, namespace string) context.Context {
 	return context.WithValue(ctx, namespaceCtxKey{}, namespace)
 }
 
-func namespaceFromContext(ctx context.Context) string {
+// NamespaceFromContext returns the namespace set by WithNamespace
+// ("" when untagged).
+func NamespaceFromContext(ctx context.Context) string {
 	ns, _ := ctx.Value(namespaceCtxKey{}).(string)
 	return ns
+}
+
+// secretVersionCtxKey carries a digest of the operation's valuesFrom Secrets'
+// resourceVersions; it salts the deterministic Job name so a secret rotation
+// yields a distinct name and cannot adopt a completed Job that ran with the
+// previous value.
+type secretVersionCtxKey struct{}
+
+// WithSecretVersionSalt tags ctx with a digest of the operation's secret
+// input versions. The runner Job name folds it in, so rotating a valuesFrom
+// Secret is not masked by adopting a stale-value completed Job.
+func WithSecretVersionSalt(ctx context.Context, salt string) context.Context {
+	return context.WithValue(ctx, secretVersionCtxKey{}, salt)
+}
+
+func secretVersionSaltFromContext(ctx context.Context) string {
+	salt, _ := ctx.Value(secretVersionCtxKey{}).(string)
+	return salt
 }
 
 // JobRunner ships every operation to a dedicated, hardened Kubernetes Job
@@ -122,6 +144,11 @@ type JobRunner struct {
 	// Image is the runner image containing the doplane-runner binary, the
 	// pulumi CLI, language toolchains and baked provider plugins.
 	Image string
+	// ImagePullPolicy is the pull policy for the runner container ("" lets
+	// Kubernetes default it). A mutable runner tag (e.g. "dev") needs "Always"
+	// so a re-pushed fix does not run stale code from a node's cached layer;
+	// a digest-pinned image can stay "IfNotPresent".
+	ImagePullPolicy corev1.PullPolicy
 	// CredentialsSecret is an optional Secret whose keys become environment
 	// variables of the runner (cloud provider credentials, registry token).
 	// Resolved in the namespace the Job runs in.
@@ -153,6 +180,31 @@ type tenantCacheEntry struct {
 // tenantCacheTTL bounds how long a tenant PVC lookup is remembered; a
 // freshly created claim takes effect within this window.
 const tenantCacheTTL = 5 * time.Minute
+
+const (
+	// completedReadJobTTL bounds how long a finished read/schema Job lingers
+	// before Kubernetes GCs it. Re-running a read is harmless, so it is
+	// cleaned up promptly.
+	completedReadJobTTL = 10 * time.Minute
+	// completedMutationJobTTL retains a finished create/patch/delete Job long
+	// enough to survive an operator outage: its pod log is the ONLY durable
+	// record of a cloud mutation the operator may not have consumed yet (it
+	// was down when the Job finished). On recovery the deterministic-named
+	// Job is adopted and its result read, instead of re-running the mutation
+	// and double-provisioning. A finished Job is deleted explicitly once its
+	// result is consumed (see executeOp cleanup), so only un-consumed Jobs —
+	// bounded by how many mutations an outage missed — ever reach this TTL.
+	completedMutationJobTTL = 24 * time.Hour
+)
+
+// jobTTLSeconds picks the finished-Job retention: short for read-only verbs,
+// long for mutations whose result must survive an operator restart.
+func jobTTLSeconds(verb string) int32 {
+	if verb == runnerops.VerbRead || verb == runnerops.VerbSchema {
+		return int32(completedReadJobTTL / time.Second)
+	}
+	return int32(completedMutationJobTTL / time.Second)
+}
 
 var _ Runner = (*JobRunner)(nil)
 
@@ -246,7 +298,7 @@ func (r *JobRunner) DeleteComponent(ctx context.Context, token, pkg string, engi
 // operator namespace otherwise.
 func (r *JobRunner) jobNamespace(ctx context.Context) string {
 	if r.PerResourceNamespace {
-		if ns := namespaceFromContext(ctx); ns != "" {
+		if ns := NamespaceFromContext(ctx); ns != "" {
 			return ns
 		}
 	}
@@ -297,7 +349,7 @@ func teardownVerb(verb string) bool {
 // being deleted too — so DoResource finalizers cannot wedge the namespace.
 func (r *JobRunner) ensureJob(ctx context.Context, namespace, name, verb, opJSON string, secretEnv []corev1.EnvVar) (string, error) {
 	credentials := r.CredentialsSecret
-	if fromProvider := credentialsFromContext(ctx); fromProvider != "" {
+	if fromProvider := CredentialsSecretFromContext(ctx); fromProvider != "" {
 		// A DoProvider profile pinned this operation to its own Secret.
 		credentials = fromProvider
 	}
@@ -333,6 +385,15 @@ func (r *JobRunner) jobName(ctx context.Context, verb, opJSON string) string {
 	_, _ = h.Write([]byte(owner))
 	_, _ = h.Write([]byte{0})
 	_, _ = h.Write([]byte(opJSON))
+	// A valuesFrom rotation changes no byte of opJSON (only the placeholder
+	// and the path→env mapping travel), so without this salt a rotated patch
+	// would adopt a completed Job that ran with the OLD secret value. The
+	// salt is empty for ops without secret inputs, leaving their names
+	// unchanged.
+	if salt := secretVersionSaltFromContext(ctx); salt != "" {
+		_, _ = h.Write([]byte{0})
+		_, _ = h.Write([]byte(salt))
+	}
 	return fmt.Sprintf("do-%s-%s", verb, hex.EncodeToString(h.Sum(nil))[:16])
 }
 
@@ -533,8 +594,11 @@ func (r *JobRunner) buildJob(name, namespace, credentialsSecret, verb, opJSON st
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit: ptr.To(int32(0)),
-			// Backstop cleanup in case the manager dies before deleting.
-			TTLSecondsAfterFinished: ptr.To(int32(600)),
+			// Backstop cleanup in case the manager dies before deleting. A
+			// finished mutation Job's pod log is the only record of the cloud
+			// change until the operator consumes it, so it is retained far
+			// longer than a read (see jobTTLSeconds).
+			TTLSecondsAfterFinished: ptr.To(jobTTLSeconds(verb)),
 			ActiveDeadlineSeconds:   ptr.To(int64(r.timeout() / time.Second)),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
@@ -553,11 +617,12 @@ func (r *JobRunner) buildJob(name, namespace, credentialsSecret, verb, opJSON st
 						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 					},
 					Containers: []corev1.Container{{
-						Name:    "doplane",
-						Image:   r.Image,
-						Command: []string{"/doplane-runner"},
-						Env:     env,
-						EnvFrom: envFrom,
+						Name:            "doplane",
+						Image:           r.Image,
+						ImagePullPolicy: r.ImagePullPolicy,
+						Command:         []string{"/doplane-runner"},
+						Env:             env,
+						EnvFrom:         envFrom,
 						SecurityContext: &corev1.SecurityContext{
 							AllowPrivilegeEscalation: ptr.To(false),
 							ReadOnlyRootFilesystem:   ptr.To(true),

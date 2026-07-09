@@ -163,20 +163,28 @@ func engineStateJSON(state []byte) (json.RawMessage, error) {
 	return json.RawMessage(state), nil
 }
 
-// classifyInfraFailure maps Job-infrastructure failure text (no envelope
-// available) onto sentinel errors where safely possible.
+// classifyInfraFailure maps envelope-less Job failure text onto sentinel
+// errors where doing so is safe. A genuine provider outcome (not-found,
+// replacement-required, …) always travels in the result envelope: the runner
+// exits 0 having "reached a decision", so its Job COMPLETES and never reaches
+// here. This path is only taken when the pod produced no envelope at all — an
+// OOM kill, eviction or deadline — where an incidental "not found" line in the
+// captured logs is not evidence the external resource is gone.
+//
+// ErrNotFound is therefore never synthesized here: reconcileDelete would treat
+// it as "already gone" and drop the finalizer (leaking the resource), and the
+// patch/read paths would clear the id and recreate (double-provisioning). The
+// caller instead returns a plain retryable error and the deterministic-named
+// Job is re-run/adopted. ErrReadNotSupported is safe to infer — its consumers
+// (terminal UpdateNotSupported, drift skip, unverified adopt) never delete or
+// recreate a resource.
 func classifyInfraFailure(logs, failMsg string) error {
 	text := runnerops.ProviderErrorText(logs, failMsg)
 	if text == "" {
 		return nil
 	}
-	switch {
-	case strings.Contains(text, "not support import") || strings.Contains(text, "import not implemented"):
+	if strings.Contains(text, "not support import") || strings.Contains(text, "import not implemented") {
 		return ErrReadNotSupported
-	case strings.Contains(text, "not found") || strings.Contains(text, "notfound") ||
-		strings.Contains(text, "nosuchbucket") || strings.Contains(text, "does not exist") ||
-		strings.Contains(text, "status code: 404") || strings.Contains(text, "statuscode: 404"):
-		return ErrNotFound
 	}
 	return nil
 }

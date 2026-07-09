@@ -92,7 +92,7 @@ func PackageForToken(token string) string {
 // Get returns a schema for pkg ("name" or "name@version") that covers token.
 // The first caller for a key performs the fetch; concurrent callers wait for
 // its result. Failed fetches are not cached — the next caller retries.
-func (c *SchemaCache) Get(ctx context.Context, pkg, token string) (*PackageSchema, error) {
+func (c *SchemaCache) Get(ctx context.Context, pkg, token string) (schema *PackageSchema, err error) {
 	key := pkg + "|" + token
 
 	c.mu.Lock()
@@ -113,15 +113,27 @@ func (c *SchemaCache) Get(ctx context.Context, pkg, token string) (*PackageSchem
 	c.pending[key] = fl
 	c.mu.Unlock()
 
-	fl.s, fl.err = c.runner.FetchSchema(ctx, pkg, token)
+	// Cleanup must run even if FetchSchema panics, or the key stays pending
+	// with an unclosed channel and every later caller blocks to its ctx
+	// deadline forever — controller-runtime recovers reconcile panics, so the
+	// process survives and a poisoned key never heals. A recovered panic
+	// becomes fl.err (and this caller's return), so waiters get a real error
+	// instead of a timeout.
+	defer func() {
+		if r := recover(); r != nil {
+			fl.err = fmt.Errorf("schema fetch for %s panicked: %v", key, r)
+		}
+		c.mu.Lock()
+		if fl.err == nil {
+			c.cache[key] = fl.s
+		}
+		delete(c.pending, key)
+		c.mu.Unlock()
+		close(fl.done)
+		schema, err = fl.s, fl.err
+	}()
 
-	c.mu.Lock()
-	if fl.err == nil {
-		c.cache[key] = fl.s
-	}
-	delete(c.pending, key)
-	c.mu.Unlock()
-	close(fl.done)
+	fl.s, fl.err = c.runner.FetchSchema(ctx, pkg, token)
 	return fl.s, fl.err
 }
 

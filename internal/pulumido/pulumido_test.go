@@ -71,12 +71,19 @@ func TestDecodeEnvelope(t *testing.T) {
 }
 
 func TestClassifyInfraFailure(t *testing.T) {
-	if err := classifyInfraFailure("error: api error NoSuchBucket: does not exist", ""); !errors.Is(err, ErrNotFound) {
-		t.Errorf("want ErrNotFound, got %v", err)
+	// A genuine provider not-found always arrives in the result envelope
+	// (the runner exits 0). An envelope-less failure carrying an incidental
+	// "not found" line is a pod kill, NOT evidence the resource is gone, so it
+	// must not become the destructive ErrNotFound (which would drop a
+	// finalizer or recreate). It stays a plain retryable error → the
+	// deterministic Job is re-run/adopted.
+	if err := classifyInfraFailure("error: api error NoSuchBucket: does not exist", ""); err != nil {
+		t.Errorf("envelope-less not-found must not synthesize a destructive sentinel, got %v", err)
 	}
 	if err := classifyInfraFailure("This will delete \"my-404-bucket\"", ""); err != nil {
 		t.Errorf("command echoes must not classify: %v", err)
 	}
+	// ErrReadNotSupported is non-destructive, so it is still inferred.
 	if err := classifyInfraFailure("", "error: Resource Import Not Implemented"); !errors.Is(err, ErrReadNotSupported) {
 		t.Errorf("fail message classification: %v", err)
 	}

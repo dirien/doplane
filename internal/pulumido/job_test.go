@@ -141,6 +141,50 @@ func TestBuildJobNamespaceAndCredentials(t *testing.T) {
 	}
 }
 
+func TestJobNameSecretVersionSalt(t *testing.T) {
+	r := &JobRunner{Namespace: "doplane-system"}
+	ctx := WithOwner(context.Background(), "ns/name")
+	const opJSON = `{"verb":"patch","id":"x"}`
+
+	base := r.jobName(ctx, runnerops.VerbPatch, opJSON)
+	// An identical op without a salt must yield the same name so a retry
+	// adopts the in-flight Job instead of re-running the mutation.
+	if again := r.jobName(ctx, runnerops.VerbPatch, opJSON); again != base {
+		t.Fatalf("job name not stable across identical ops: %q vs %q", base, again)
+	}
+	// A rotated secret (new salt, byte-identical opJSON) must change the name
+	// so the runner cannot adopt a completed Job that ran with the old value.
+	rotated := r.jobName(WithSecretVersionSalt(ctx, "v2digest"), runnerops.VerbPatch, opJSON)
+	if rotated == base {
+		t.Fatal("secret version salt did not change the job name")
+	}
+	// The salted name is itself stable so the rotated op is still adoptable.
+	if again := r.jobName(WithSecretVersionSalt(ctx, "v2digest"), runnerops.VerbPatch, opJSON); again != rotated {
+		t.Fatalf("salted job name not stable: %q vs %q", rotated, again)
+	}
+}
+
+func TestJobTTLSeconds(t *testing.T) {
+	// Read/schema results are cheap to reproduce → short TTL.
+	for _, verb := range []string{runnerops.VerbRead, runnerops.VerbSchema} {
+		if got := jobTTLSeconds(verb); got != 600 {
+			t.Errorf("jobTTLSeconds(%q) = %d, want 600", verb, got)
+		}
+	}
+	// A finished mutation Job is the only record of the cloud change until
+	// consumed, so it must outlive a realistic operator outage.
+	for _, verb := range []string{runnerops.VerbCreate, runnerops.VerbPatch, runnerops.VerbDelete, runnerops.VerbEngineUp} {
+		if got := jobTTLSeconds(verb); got != 86400 {
+			t.Errorf("jobTTLSeconds(%q) = %d, want 86400", verb, got)
+		}
+	}
+	r := &JobRunner{Namespace: "doplane-system"}
+	job := r.buildJob("do-create-abc", "tenant-a", "", runnerops.VerbCreate, "{}", nil, false)
+	if job.Spec.TTLSecondsAfterFinished == nil || *job.Spec.TTLSecondsAfterFinished != 86400 {
+		t.Errorf("mutation job TTL not wired onto the Job: %v", job.Spec.TTLSecondsAfterFinished)
+	}
+}
+
 func TestCacheAvailable(t *testing.T) {
 	ctx := context.Background()
 	clientset := fake.NewClientset(&corev1.PersistentVolumeClaim{

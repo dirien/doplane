@@ -30,6 +30,9 @@ type countingRunner struct {
 	calls   atomic.Int32
 	release chan struct{}
 	err     error
+	// panicCalls makes the first N FetchSchema invocations panic, to exercise
+	// the cache's panic-safe cleanup.
+	panicCalls int32
 }
 
 func (c *countingRunner) Create(context.Context, string, string, map[string]any) (string, map[string]any, error) {
@@ -57,7 +60,9 @@ func (c *countingRunner) DeleteComponent(context.Context, string, string, []byte
 	return errors.New("not implemented")
 }
 func (c *countingRunner) FetchSchema(ctx context.Context, pkg, token string) (*PackageSchema, error) {
-	c.calls.Add(1)
+	if n := c.calls.Add(1); n <= c.panicCalls {
+		panic("simulated fetch panic")
+	}
 	if c.release != nil {
 		select {
 		case <-c.release:
@@ -127,6 +132,38 @@ func TestSchemaCacheErrorNotCached(t *testing.T) {
 	}
 	if got := runner.calls.Load(); got != 2 {
 		t.Errorf("want 2 fetches, got %d", got)
+	}
+}
+
+func TestSchemaCachePanicNotPoisoned(t *testing.T) {
+	runner := &countingRunner{panicCalls: 1} // the first fetch panics
+	cache := NewSchemaCache(runner)
+	ctx := context.Background()
+
+	// A panicking fetch must surface as an error (recovered), not propagate
+	// and not hang.
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("Get must recover the fetch panic, got %v", r)
+			}
+		}()
+		if _, err := cache.Get(ctx, "aws", "t"); err == nil {
+			t.Fatal("a panicking fetch must return an error")
+		}
+	}()
+
+	// The key must not be poisoned: the next caller retries and succeeds
+	// instead of blocking on an unclosed pending entry.
+	got, err := cache.Get(ctx, "aws", "t")
+	if err != nil {
+		t.Fatalf("retry after a panic must succeed, got %v", err)
+	}
+	if got == nil || got.Name != "aws" {
+		t.Fatalf("unexpected schema after retry: %+v", got)
+	}
+	if n := runner.calls.Load(); n != 2 {
+		t.Errorf("want 2 fetches (panic + retry), got %d", n)
 	}
 }
 

@@ -61,7 +61,7 @@ func (r *ExecRunner) execute(ctx context.Context, op runnerops.Op) (runnerops.Re
 		var ordered []SecretInput
 		op.SecretInputs, ordered = secretInputsPlan(inputs)
 		values := make(map[string]string, len(ordered))
-		namespace := namespaceFromContext(ctx)
+		namespace := NamespaceFromContext(ctx)
 		for i, in := range ordered {
 			value, err := r.ResolveSecret(ctx, namespace, in.SecretName, in.SecretKey)
 			if err != nil {
