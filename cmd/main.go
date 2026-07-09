@@ -30,6 +30,7 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -105,6 +106,7 @@ const runnerNamespaceModeResource = "resource"
 type runnerConfig struct {
 	mode                 string
 	image                string
+	imagePullPolicy      string
 	namespace            string
 	namespaceMode        string
 	credentialsSecret    string
@@ -138,6 +140,7 @@ func newRunner(mgr ctrl.Manager, cfg runnerConfig) (pulumido.Runner, error) {
 			Namespace:            cfg.namespace,
 			PerResourceNamespace: cfg.namespaceMode == runnerNamespaceModeResource,
 			Image:                cfg.image,
+			ImagePullPolicy:      corev1.PullPolicy(cfg.imagePullPolicy),
 			CredentialsSecret:    cfg.credentialsSecret,
 			PluginCachePVC:       cfg.pluginCachePVC,
 			PluginCacheMountPath: cfg.pluginCacheMountPath,
@@ -181,6 +184,7 @@ func main() {
 	var enableHTTP2 bool
 	var runnerMode string
 	var runnerImage string
+	var runnerImagePullPolicy string
 	var runnerNamespace string
 	var runnerNamespaceMode string
 	var watchNamespaces string
@@ -212,6 +216,9 @@ func main() {
 			"(in-cluster default), 'exec' runs the local pulumi binary (development default).")
 	flag.StringVar(&runnerImage, "runner-image", os.Getenv("RUNNER_IMAGE"),
 		"Image for runner Jobs (pulumi CLI + provider plugins + jq). Required in job mode.")
+	flag.StringVar(&runnerImagePullPolicy, "runner-image-pull-policy", os.Getenv("RUNNER_IMAGE_PULL_POLICY"),
+		"Pull policy for the runner container ('Always', 'IfNotPresent', 'Never'). Empty lets Kubernetes "+
+			"default it. Use 'Always' with a mutable runner tag so a re-pushed fix is not masked by a cached layer.")
 	flag.StringVar(&runnerNamespace, "runner-namespace", os.Getenv("POD_NAMESPACE"),
 		"Namespace runner Jobs are created in. Defaults to the operator's namespace.")
 	flag.StringVar(&runnerNamespaceMode, "runner-namespace-mode", envOr("RUNNER_NAMESPACE_MODE", "operator"),
@@ -234,8 +241,11 @@ func main() {
 	flag.DurationVar(&runnerTimeout, "runner-timeout", 10*time.Minute,
 		"Timeout for a single pulumi do operation.")
 	flag.StringVar(&pulumiBin, "pulumi-bin", "pulumi", "Path to the pulumi binary (exec mode only).")
+	// In-cluster deployments (detected like defaultRunnerMode) log structured
+	// JSON at production levels; local development keeps the human-friendly
+	// console encoder. Both are overridable via the --zap-* flags.
 	opts := zap.Options{
-		Development: true,
+		Development: os.Getenv("POD_NAMESPACE") == "",
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -362,6 +372,7 @@ func main() {
 	runner, err := newRunner(mgr, runnerConfig{
 		mode:                 runnerMode,
 		image:                runnerImage,
+		imagePullPolicy:      runnerImagePullPolicy,
 		namespace:            runnerNamespace,
 		namespaceMode:        runnerNamespaceMode,
 		credentialsSecret:    credentialsSecret,
