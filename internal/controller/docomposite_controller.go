@@ -100,6 +100,11 @@ func (r *DoCompositeReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		if apierrors.IsNotFound(err) {
 			return r.markCompositeFailed(ctx, comp, "RevisionNotFound", err)
 		}
+		// A revisionRef pinned to another definition's revision is a permanent
+		// user error: surface it as a condition instead of hot-looping.
+		if errors.Is(err, errRevisionMismatch) {
+			return r.markCompositeFailed(ctx, comp, "RevisionInvalid", err)
+		}
 		return ctrl.Result{}, err
 	}
 	effective := def.DeepCopy()

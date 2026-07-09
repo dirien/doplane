@@ -17,6 +17,7 @@ limitations under the License.
 package controller
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -199,6 +200,9 @@ func (r *TypedResourceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 	mirror := &dov1alpha1.DoResource{ObjectMeta: metav1.ObjectMeta{Namespace: obj.GetNamespace(), Name: obj.GetName()}}
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, mirror, func() error {
+		if err := ensureControlled(obj, mirror, "DoResource"); err != nil {
+			return err
+		}
 		if mirror.Spec.Type == "" {
 			mirror.Spec.Type = r.Token
 		}
@@ -211,7 +215,7 @@ func (r *TypedResourceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{}, r.mirrorStatusBack(ctx, obj, map[string]any{
+	return ctrl.Result{}, mirrorStatusBack(ctx, r.Client, obj, map[string]any{
 		"id":         mirror.Status.ID,
 		"conditions": mirror.Status.Conditions,
 		"outputs":    mirror.Status.Outputs,
@@ -242,18 +246,62 @@ func (r *TypedResourceReconciler) mirrorSpec(obj *unstructured.Unstructured) (*d
 	return spec, nil
 }
 
+// ensureControlled rejects an existing mirror the typed object does not
+// control. Typed object names are unique per kind only, while all mirrors
+// of a namespace share one name space per mirror kind — so two typed kinds
+// (or a hand-created mirror) can collide on a name, and adopting the
+// object would overwrite state the typed object does not own.
+func ensureControlled(obj *unstructured.Unstructured, mirror client.Object, mirrorKind string) error {
+	if mirror.GetResourceVersion() == "" || metav1.IsControlledBy(mirror, obj) {
+		return nil
+	}
+	return fmt.Errorf("%s %s/%s already exists and is not controlled by %s %q; rename the %s object or remove the conflicting %s",
+		mirrorKind, mirror.GetNamespace(), mirror.GetName(), obj.GetKind(), obj.GetName(), obj.GetKind(), mirrorKind)
+}
+
 // mirrorStatusBack writes the mirror's observed state onto the typed
-// object's status subresource.
-func (r *TypedResourceReconciler) mirrorStatusBack(ctx context.Context, obj *unstructured.Unstructured, status map[string]any) error {
-	converted, err := toUnstructuredValue(status)
+// object's status subresource. An unchanged status is not written: the
+// typed kind is watched without predicates, so a no-op update would
+// enqueue the object again and reconcile-write forever.
+func mirrorStatusBack(ctx context.Context, c client.Client, obj *unstructured.Unstructured, status map[string]any) error {
+	desired, err := toUnstructuredValue(status)
 	if err != nil {
 		return err
 	}
-	obj.Object["status"] = converted
-	if err := r.Status().Update(ctx, obj); err != nil {
-		return client.IgnoreNotFound(err)
+	stripNilValues(desired)
+	current, _, _ := unstructured.NestedMap(obj.Object, "status")
+	stripNilValues(current)
+	if sameJSON(current, desired) {
+		return nil
 	}
-	return nil
+	obj.Object["status"] = desired
+	return client.IgnoreNotFound(c.Status().Update(ctx, obj))
+}
+
+// stripNilValues drops top-level null entries so the comparison in
+// mirrorStatusBack stays stable regardless of whether the API server
+// preserves or prunes them.
+func stripNilValues(m map[string]any) {
+	for k, v := range m {
+		if v == nil {
+			delete(m, k)
+		}
+	}
+}
+
+// sameJSON compares two unstructured values by their canonical JSON
+// encoding, tolerating the int64-vs-float64 skew between API-server
+// decoding and local marshalling.
+func sameJSON(a, b any) bool {
+	aj, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	bj, err := json.Marshal(b)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(aj, bj)
 }
 
 // TypedCompositeReconciler translates one generated platform-API kind
@@ -287,6 +335,9 @@ func (r *TypedCompositeReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 	mirror := &dov1alpha1.DoComposite{ObjectMeta: metav1.ObjectMeta{Namespace: obj.GetNamespace(), Name: obj.GetName()}}
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, mirror, func() error {
+		if err := ensureControlled(obj, mirror, "DoComposite"); err != nil {
+			return err
+		}
 		mirror.Spec.Definition = r.Definition
 		mirror.Spec.Parameters = &apiextensionsv1.JSON{Raw: raw}
 		return controllerutil.SetControllerReference(obj, mirror, r.Scheme)
@@ -294,21 +345,12 @@ func (r *TypedCompositeReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
-	status := map[string]any{
+	return ctrl.Result{}, mirrorStatusBack(ctx, r.Client, obj, map[string]any{
 		"readyResources": mirror.Status.ReadyResources,
 		"resources":      mirror.Status.Resources,
 		"revision":       mirror.Status.Revision,
 		"conditions":     mirror.Status.Conditions,
-	}
-	converted, err := toUnstructuredValue(status)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	obj.Object["status"] = converted
-	if err := r.Status().Update(ctx, obj); err != nil {
-		return ctrl.Result{}, client.IgnoreNotFound(err)
-	}
-	return ctrl.Result{}, nil
+	})
 }
 
 // toUnstructuredValue converts typed values (conditions, JSON blobs) into

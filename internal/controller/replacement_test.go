@@ -147,4 +147,28 @@ var _ = Describe("DoResource replacement safety", func() {
 		Expect(res.Status.ID).To(Equal("fake-id-2"))
 		Expect(runner.deleted).To(ContainElement("fake-id-1"), "old resource deleted before the retry create")
 	})
+
+	It("stays terminal on the replacement path once a secret embeds in the id", func() {
+		createAndDrift(ptr.To(false)) // unprotected → would replace automatically
+		secretInIDErr := &pulumido.CodedError{Code: runnerops.CodeSecretInputInID, Message: "id embeds a secret"}
+		runner.createErrs = []error{secretInIDErr}
+
+		// First replacement: the create runs, the provider-assigned id embeds
+		// a secret → terminal SecretInputInID; the original is left in place.
+		reconcileOnce()
+		res := &dov1alpha1.DoResource{}
+		Expect(k8sClient.Get(ctx, resourceKey, res)).To(Succeed())
+		Expect(meta.FindStatusCondition(res.Status.Conditions, dov1alpha1.ConditionSynced).Reason).To(Equal("SecretInputInID"))
+		Expect(res.Status.ID).To(Equal("fake-id-1"))
+		Expect(runner.created).To(HaveLen(1), "the failed create is not a recorded success")
+
+		// A generation-independent re-enqueue (createErrs now drained, so a
+		// re-create would SUCCEED) must not run another Create and orphan a
+		// second resource — the guard keeps it terminal, like the create path.
+		reconcileOnce()
+		Expect(k8sClient.Get(ctx, resourceKey, res)).To(Succeed())
+		Expect(res.Status.ID).To(Equal("fake-id-1"))
+		Expect(runner.created).To(HaveLen(1), "no second replacement Create after SecretInputInID")
+		Expect(runner.deleted).To(BeEmpty(), "the original must not be deleted")
+	})
 })

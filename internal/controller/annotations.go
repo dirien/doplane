@@ -76,6 +76,18 @@ func pollInterval(res *dov1alpha1.DoResource, fallback time.Duration) (time.Dura
 	return d, true
 }
 
+// secretIDTerminal reports whether this exact generation already failed with
+// SecretInputInID. guardSecretID rejects the result only after the provider
+// created the external resource, so each create/replace attempt that routes a
+// secret into an identity-forming property orphans another one. The failure
+// is therefore hard-terminal until the spec changes — on both the create and
+// the replacement path — which is why both consult this before calling Create.
+func secretIDTerminal(res *dov1alpha1.DoResource) bool {
+	cond := meta.FindStatusCondition(res.Status.Conditions, dov1alpha1.ConditionSynced)
+	return cond != nil && cond.Status == metav1.ConditionFalse &&
+		cond.Reason == "SecretInputInID" && cond.ObservedGeneration == res.Generation
+}
+
 // reconcileCreate provisions the external resource: an external-name
 // annotation adopts an existing one instead of creating a second (it is
 // also what a crashed create leaves behind — the annotation is persisted
@@ -95,9 +107,7 @@ func (r *DoResourceReconciler) reconcileCreate(ctx context.Context, res *dov1alp
 	// A recorded SecretInputInID failure for this generation is hard
 	// terminal: every additional create attempt orphans another external
 	// resource. Only a spec change may retry.
-	if cond := meta.FindStatusCondition(res.Status.Conditions, dov1alpha1.ConditionSynced); cond != nil &&
-		cond.Status == metav1.ConditionFalse && cond.Reason == "SecretInputInID" &&
-		cond.ObservedGeneration == res.Generation {
+	if secretIDTerminal(res) {
 		return ctrl.Result{}, nil
 	}
 	log.Info("creating external resource", "type", token)

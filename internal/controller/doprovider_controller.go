@@ -106,7 +106,8 @@ func (r *DoProviderReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 // provider's schema and starts the translation controllers.
 func (r *DoProviderReconciler) ensureTypedResources(ctx context.Context, provider *dov1alpha1.DoProvider) error {
 	for _, token := range provider.Spec.TypedResources {
-		schema, err := r.Schemas.Get(pulumido.WithOwner(ctx, "doprovider/"+provider.Name), provider.Spec.Package, token)
+		schema, err := r.Schemas.Get(schemaFetchContext(ctx, "doprovider/"+provider.Name, provider.Spec, r.RunnerNamespace),
+			provider.Spec.Package, token)
 		if err != nil {
 			return fmt.Errorf("schema for %s: %w", token, err)
 		}
@@ -162,7 +163,7 @@ func (r *DoProviderReconciler) validateProfile(ctx context.Context, obj runtime.
 	// installs the pinned plugin into the shared cache when enabled — one
 	// step proves both schema and plugin availability.
 	schemaOK := true
-	schema, err := r.Schemas.Get(pulumido.WithOwner(ctx, owner), spec.Package, "")
+	schema, err := r.Schemas.Get(schemaFetchContext(ctx, owner, spec, secretNamespace), spec.Package, "")
 	if err != nil {
 		schemaOK = false
 		reason := schemaFailureReason(err)
@@ -245,6 +246,22 @@ func (r *DoProviderReconciler) checkCredentials(ctx context.Context, spec dov1al
 	default:
 		return false, err
 	}
+}
+
+// schemaFetchContext tags ctx so the schema fetch runs with the profile's
+// own credentials Secret, resolved in the namespace whose Secret the
+// profile checks validate (private registry packages need the profile's
+// PULUMI_ACCESS_TOKEN, not the deployment default). Profiles without a
+// credentialsSecretRef stay untagged, keeping the shared-fetch behavior.
+func schemaFetchContext(ctx context.Context, owner string, spec dov1alpha1.DoProviderSpec, secretNamespace string) context.Context {
+	ctx = pulumido.WithOwner(ctx, owner)
+	if spec.CredentialsSecretRef != nil {
+		ctx = pulumido.WithCredentialsSecret(ctx, spec.CredentialsSecretRef.Name)
+		if secretNamespace != "" {
+			ctx = pulumido.WithNamespace(ctx, secretNamespace)
+		}
+	}
+	return ctx
 }
 
 // schemaFailureReason maps a schema fetch error onto its condition reason,

@@ -42,21 +42,29 @@ const secretInputPlaceholder = "doplane:secret-input"
 // re-patch. Metadata-only reads keep secret data out of controller memory;
 // Secrets living elsewhere (operator-namespace runner mode) are skipped —
 // rotation then applies with the next spec change or drift patch.
-func (r *DoResourceReconciler) mixSecretVersions(ctx context.Context, res *dov1alpha1.DoResource, hash string) string {
+//
+// It also returns salt, a digest of the same versions independent of hash.
+// The controller tags the runner context with salt so a rotation yields a
+// distinct Job name and cannot adopt a completed Job that ran with the old
+// value; keeping salt separate leaves the appliedHash formula unchanged, so
+// upgrades do not spuriously re-patch every resource.
+func (r *DoResourceReconciler) mixSecretVersions(ctx context.Context, res *dov1alpha1.DoResource, hash string) (mixed, salt string) {
 	if len(res.Spec.ValuesFrom) == 0 {
-		return hash
+		return hash, ""
 	}
-	h := sha256.New()
-	h.Write([]byte(hash))
+	full := sha256.New()
+	full.Write([]byte(hash))
+	saltH := sha256.New()
 	for _, v := range res.Spec.ValuesFrom {
 		pm := &metav1.PartialObjectMetadata{}
 		pm.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Secret"))
 		if err := r.reader().Get(ctx, types.NamespacedName{Namespace: res.Namespace, Name: v.SecretKeyRef.Name}, pm); err != nil {
 			continue
 		}
-		_, _ = fmt.Fprintf(h, "%s=%s;", v.SecretKeyRef.Name, pm.ResourceVersion)
+		_, _ = fmt.Fprintf(full, "%s=%s;", v.SecretKeyRef.Name, pm.ResourceVersion)
+		_, _ = fmt.Fprintf(saltH, "%s=%s;", v.SecretKeyRef.Name, pm.ResourceVersion)
 	}
-	return hex.EncodeToString(h.Sum(nil))[:16]
+	return hex.EncodeToString(full.Sum(nil))[:16], hex.EncodeToString(saltH.Sum(nil))[:16]
 }
 
 // stageSecretInputs prepares spec.valuesFrom for the operation: a

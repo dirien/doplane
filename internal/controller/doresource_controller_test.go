@@ -53,6 +53,11 @@ type fakeRunner struct {
 	componentCreates []map[string]any
 	componentUpdates []map[string]any
 	componentDeletes [][]byte
+
+	// schemaCreds/schemaNamespaces record the ctx tags of each FetchSchema
+	// call ("" when untagged).
+	schemaCreds      []string
+	schemaNamespaces []string
 }
 
 func (f *fakeRunner) CreateComponent(_ context.Context, token, _ string, props map[string]any) (string, map[string]any, []byte, error) {
@@ -114,7 +119,9 @@ func (f *fakeRunner) Delete(_ context.Context, _, pkg, id string) error {
 	return nil
 }
 
-func (f *fakeRunner) FetchSchema(_ context.Context, _, token string) (*pulumido.PackageSchema, error) {
+func (f *fakeRunner) FetchSchema(ctx context.Context, _, token string) (*pulumido.PackageSchema, error) {
+	f.schemaCreds = append(f.schemaCreds, pulumido.CredentialsSecretFromContext(ctx))
+	f.schemaNamespaces = append(f.schemaNamespaces, pulumido.NamespaceFromContext(ctx))
 	return &pulumido.PackageSchema{
 		Name:    "random",
 		Version: "4.21.0",

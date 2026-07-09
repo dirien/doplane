@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	dov1alpha1 "github.com/dirien/doplane/api/v1alpha1"
@@ -41,6 +42,7 @@ var _ = Describe("DoProvider Controller", func() {
 	secretKey := types.NamespacedName{Namespace: "default", Name: secretName}
 
 	var reconciler *DoProviderReconciler
+	var runner *fakeRunner
 
 	newProvider := func(spec dov1alpha1.DoProviderSpec) *dov1alpha1.DoProvider {
 		provider := &dov1alpha1.DoProvider{
@@ -60,7 +62,7 @@ var _ = Describe("DoProvider Controller", func() {
 	}
 
 	BeforeEach(func() {
-		runner := &fakeRunner{}
+		runner = &fakeRunner{}
 		reconciler = &DoProviderReconciler{
 			Client:          k8sClient,
 			Scheme:          k8sClient.Scheme(),
@@ -101,6 +103,11 @@ var _ = Describe("DoProvider Controller", func() {
 		Expect(provider.Status.Plugin.Ready).To(BeTrue())
 		Expect(provider.Status.Plugin.CachePath).To(Equal("/var/lib/doplane/pulumi-home"))
 		Expect(provider.Status.LastSchemaFetchTime).NotTo(BeNil())
+
+		// The schema fetch must run with the profile's own credentials in
+		// the runner namespace, not the deployment default.
+		Expect(runner.schemaCreds).To(ConsistOf(secretName))
+		Expect(runner.schemaNamespaces).To(ConsistOf("default"))
 	})
 
 	It("counts dependent resources", func() {
@@ -172,14 +179,23 @@ var _ = Describe("DoProvider Controller", func() {
 		Expect(meta.IsStatusConditionTrue(provider.Status.Conditions, dov1alpha1.ConditionReady)).To(BeTrue())
 		cond := meta.FindStatusCondition(provider.Status.Conditions, dov1alpha1.ConditionCredentialsReady)
 		Expect(cond.Reason).To(Equal("NotRequired"))
+
+		// No credentialsSecretRef → the schema fetch stays untagged so
+		// shared fetches keep using the deployment default.
+		Expect(runner.schemaCreds).To(ConsistOf(""))
+		Expect(runner.schemaNamespaces).To(ConsistOf(""))
 	})
 
 	It("checks DoProviderConfig credentials in the config's own namespace", func() {
 		// Per-resource runner mode: Jobs (and thus Secrets) live in the
 		// tenant namespace — that is where readiness must be validated.
+		const tenantNamespace = "tenant-schema"
+		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: tenantNamespace},
+		}))).To(Succeed())
 		configReconciler := &DoProviderConfigReconciler{Profile: reconciler, PerResourceNamespace: true}
 		config := &dov1alpha1.DoProviderConfig{
-			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: providerName},
+			ObjectMeta: metav1.ObjectMeta{Namespace: tenantNamespace, Name: providerName},
 			Spec: dov1alpha1.DoProviderSpec{
 				Package:              "random@4.21.0",
 				CredentialsSecretRef: &dov1alpha1.LocalSecretReference{Name: secretName},
@@ -188,7 +204,7 @@ var _ = Describe("DoProvider Controller", func() {
 		}
 		Expect(k8sClient.Create(ctx, config)).To(Succeed())
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, config) })
-		configKey := types.NamespacedName{Namespace: "default", Name: providerName}
+		configKey := types.NamespacedName{Namespace: tenantNamespace, Name: providerName}
 
 		// Secret missing in the tenant namespace → not Ready.
 		_, err := configReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: configKey})
@@ -198,11 +214,22 @@ var _ = Describe("DoProvider Controller", func() {
 		Expect(cond).NotTo(BeNil())
 		Expect(cond.Reason).To(Equal("SecretNotFound"))
 
+		// The schema fetch must carry the config's credentials Secret and
+		// tenant namespace — a private registry package is only readable
+		// with the tenant's PULUMI_ACCESS_TOKEN.
+		Expect(runner.schemaCreds).To(ConsistOf(secretName))
+		Expect(runner.schemaNamespaces).To(ConsistOf(tenantNamespace))
+
 		// Tenant creates the Secret in their namespace → Ready.
 		Expect(k8sClient.Create(ctx, &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: secretName},
+			ObjectMeta: metav1.ObjectMeta{Namespace: tenantNamespace, Name: secretName},
 			Data:       map[string][]byte{"RANDOM_TOKEN": []byte("t")},
 		})).To(Succeed())
+		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Namespace: tenantNamespace, Name: secretName},
+			})
+		})
 		_, err = configReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: configKey})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(k8sClient.Get(ctx, configKey, config)).To(Succeed())

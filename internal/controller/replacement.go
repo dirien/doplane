@@ -63,6 +63,15 @@ func (r *DoResourceReconciler) reconcileReplacement(ctx context.Context, res *do
 				res.Status.ID, annApproveReplacement, res.Generation, patchErr), false)
 	}
 
+	// A prior replacement Create for this generation already orphaned a
+	// resource whose id embedded a secret; another attempt would orphan
+	// another (the deterministic Job is gone once TTL-collected, so a
+	// generation-independent re-enqueue would re-run the Create). Stay
+	// terminal exactly as the create path does.
+	if secretIDTerminal(res) {
+		return ctrl.Result{}, nil
+	}
+
 	log := logf.FromContext(ctx)
 	oldID := res.Status.ID
 

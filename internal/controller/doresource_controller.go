@@ -184,7 +184,12 @@ func (r *DoResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	hash = r.mixSecretVersions(ctx, res, hash)
+	hash, secretSalt := r.mixSecretVersions(ctx, res, hash)
+	if secretSalt != "" {
+		// Salt the runner Job name with the input Secrets' versions so a
+		// rotation cannot adopt a completed Job that ran with the old value.
+		ctx = pulumido.WithSecretVersionSalt(ctx, secretSalt)
+	}
 
 	// Component resources are orchestrated through an ephemeral engine
 	// (stateless `pulumi do` cannot construct them); the exported
@@ -526,7 +531,18 @@ func (r *DoResourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// mapGraphNeighbors maps a DoResource event to its dependents and sources.
+// mapGraphNeighbors maps a DoResource event to the neighbors that must
+// re-reconcile because of it: its dependents (things referencing res —
+// value propagation and readiness gating) always, and the sources res
+// references only while res is terminating.
+//
+// The source leg exists purely to unblock a source's teardown once res
+// starts deleting; a settled res never needs its sources to reconcile, and
+// waking them on res's ordinary status churn is what let two volatile-output
+// resources ping-pong drift-read Jobs forever (each hop mutated an output,
+// which woke the other). Restricting it to res terminating breaks that loop
+// while keeping deletion responsive (a blocked source also re-checks on its
+// own 15s teardown backstop).
 func (r *DoResourceReconciler) mapGraphNeighbors(ctx context.Context, obj client.Object) []reconcile.Request {
 	res, ok := obj.(*dov1alpha1.DoResource)
 	if !ok {
@@ -538,11 +554,13 @@ func (r *DoResourceReconciler) mapGraphNeighbors(ctx context.Context, obj client
 			reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: res.Namespace, Name: name}})
 		}
 	}
-	for _, ref := range res.Spec.References {
-		if ref.From.Name == res.Name {
-			continue
+	if !res.DeletionTimestamp.IsZero() {
+		for _, ref := range res.Spec.References {
+			if ref.From.Name == res.Name {
+				continue
+			}
+			reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: res.Namespace, Name: ref.From.Name}})
 		}
-		reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: res.Namespace, Name: ref.From.Name}})
 	}
 	return reqs
 }

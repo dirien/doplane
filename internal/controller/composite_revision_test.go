@@ -18,10 +18,13 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -141,5 +144,69 @@ var _ = Describe("DoComposite revisions and update policy", func() {
 		Expect(k8sClient.Get(ctx, nn("rev-manual"), manual)).To(Succeed())
 		Expect(manual.Status.Revision).To(Equal(defName + "-v2"))
 		Expect(childPrefix("rev-manual")).To(ContainSubstring(`"two"`))
+	})
+
+	It("prunes revisions beyond the history limit but never referenced ones", func() {
+		Expect(k8sClient.Create(ctx, definition("one"))).To(Succeed())
+		comp := &dov1alpha1.DoComposite{
+			ObjectMeta: metav1.ObjectMeta{Name: "rev-manual", Namespace: ns},
+			Spec:       dov1alpha1.DoCompositeSpec{Definition: defName, UpdatePolicy: dov1alpha1.UpdateManual},
+		}
+		Expect(k8sClient.Create(ctx, comp)).To(Succeed())
+		reconcileComp("rev-manual") // pins the Manual instance to v1
+
+		// Edit the definition well past the history limit.
+		def := &dov1alpha1.DoCompositeDefinition{}
+		for i := 2; i <= revisionHistoryLimit+3; i++ {
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: defName}, def)).To(Succeed())
+			def.Spec = definition(fmt.Sprintf("p%d", i)).Spec
+			Expect(k8sClient.Update(ctx, def)).To(Succeed())
+			reconcileComp("rev-manual")
+		}
+
+		rev := &dov1alpha1.DoCompositeDefinitionRevision{}
+		// v1 survives despite being beyond the limit: the Manual composite
+		// still renders from it.
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: defName + "-v1"}, rev)).To(Succeed())
+		// v2 is unreferenced and beyond the limit: pruned.
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: defName + "-v2"}, rev)
+		Expect(apierrors.IsNotFound(err)).To(BeTrue(), "v2 must be pruned, got: %v", err)
+		// The newest revision always survives.
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: fmt.Sprintf("%s-v%d", defName, revisionHistoryLimit+3)}, rev)).To(Succeed())
+	})
+
+	It("marks a composite RevisionInvalid when revisionRef pins another definition's revision", func() {
+		Expect(k8sClient.Create(ctx, definition("one"))).To(Succeed())
+
+		// A second definition owning its own revision snapshot.
+		otherRev := &dov1alpha1.DoCompositeDefinitionRevision{
+			ObjectMeta: metav1.ObjectMeta{Name: "other-def-v1"},
+			Spec: dov1alpha1.DoCompositeDefinitionRevisionSpec{
+				DefinitionName: "other-def",
+				Revision:       1,
+				Definition:     definition("other").Spec,
+			},
+		}
+		Expect(k8sClient.Create(ctx, otherRev)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, otherRev) })
+
+		// A composite of rev-def mis-pinned to other-def's revision.
+		comp := &dov1alpha1.DoComposite{
+			ObjectMeta: metav1.ObjectMeta{Name: "mispinned", Namespace: ns},
+			Spec: dov1alpha1.DoCompositeSpec{
+				Definition:  defName,
+				RevisionRef: &dov1alpha1.RevisionReference{Name: "other-def-v1"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, comp)).To(Succeed())
+		reconcileComp("mispinned")
+
+		Expect(k8sClient.Get(ctx, nn("mispinned"), comp)).To(Succeed())
+		cond := meta.FindStatusCondition(comp.Status.Conditions, dov1alpha1.ConditionSynced)
+		Expect(cond).NotTo(BeNil())
+		Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+		Expect(cond.Reason).To(Equal("RevisionInvalid"), "a permanent misconfiguration must surface as a condition, not hot-loop")
+		// Ready is cleared too, so the composite stops advertising availability.
+		Expect(meta.IsStatusConditionTrue(comp.Status.Conditions, dov1alpha1.ConditionReady)).To(BeFalse())
 	})
 })

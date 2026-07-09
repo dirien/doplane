@@ -94,6 +94,44 @@ var _ = Describe("DoResource reference graph", func() {
 		}
 	})
 
+	It("wakes referenced sources only while terminating, so volatile outputs cannot drift-loop", func() {
+		defer cleanup("loop-b", "loop-a")
+
+		refs := []dov1alpha1.Reference{{
+			ToPath: "prefix",
+			From:   dov1alpha1.ReferenceSource{Name: "loop-b", FieldPath: "status.id"},
+		}}
+		Expect(k8sClient.Create(ctx, makeRes("loop-b", map[string]any{"length": 2}, nil))).To(Succeed())
+		Expect(k8sClient.Create(ctx, makeRes("loop-a", map[string]any{"length": 2}, refs))).To(Succeed())
+
+		names := func(reqs []reconcile.Request) []string {
+			out := make([]string, 0, len(reqs))
+			for _, r := range reqs {
+				out = append(out, r.Name)
+			}
+			return out
+		}
+
+		a := &dov1alpha1.DoResource{}
+		Expect(k8sClient.Get(ctx, nn("loop-a"), a)).To(Succeed())
+		// A settled resource's status churn must NOT wake the source it
+		// references — that source leg is what let two volatile-output
+		// resources ping-pong drift-read Jobs endlessly.
+		Expect(names(reconciler.mapGraphNeighbors(ctx, a))).NotTo(ContainElement("loop-b"))
+
+		// While terminating, the source leg fires so the referenced source's
+		// teardown can unblock.
+		now := metav1.Now()
+		a.DeletionTimestamp = &now
+		Expect(names(reconciler.mapGraphNeighbors(ctx, a))).To(ContainElement("loop-b"))
+
+		// The dependent leg is unconditional: a source always wakes the
+		// resources referencing it (value propagation / readiness gating).
+		b := &dov1alpha1.DoResource{}
+		Expect(k8sClient.Get(ctx, nn("loop-b"), b)).To(Succeed())
+		Expect(names(reconciler.mapGraphNeighbors(ctx, b))).To(ContainElement("loop-a"))
+	})
+
 	It("gates on dependencies, resolves and propagates values, and blocks teardown", func() {
 		defer cleanup("pet-b", "pet-a")
 
