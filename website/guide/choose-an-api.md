@@ -82,7 +82,7 @@ Use this API when consumers need one provider resource but should not type a Pul
 
 A `DoCompositeDefinition` renders a graph of ordinary `DoResource` children. `${resources.*}` expressions compile into references, so ordering and propagation remain visible to the graph engine.
 
-The typed platform kind is the intended product: add `spec.api` and doplane serves the definition as a real, versioned Kubernetes API (for example `websites.platform.acme.com/v1` — platform groups need the install-time `compositeApiGroups` allowlist). `spec.api.parametersSchema` is the single parameter contract, validated at admission for typed objects and at render time for raw `DoComposite`s; doplane's lifecycle knobs live under the reserved `spec.doplane` block of typed objects. `kubectl get docd` shows the `APIServed` condition and per-version object counts. Use a generic `DoComposite` directly for debugging or while the API is still evolving.
+The typed platform kind is the intended product: add `spec.api` and doplane serves the definition as a real, versioned Kubernetes API (for example `websites.platform.acme.com/v1`). Publishing, group allowlisting, the parameter contract, version bumps, and retirement have their own chapter: [Platform APIs](/guide/platform-apis). Use a generic `DoComposite` directly for debugging or while the API is still evolving.
 
 ## Constraints to preserve
 

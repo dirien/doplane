@@ -271,7 +271,7 @@ Use this API when consumers need one provider resource but should not type a Pul
 
 A `DoCompositeDefinition` renders a graph of ordinary `DoResource` children. `${resources.*}` expressions compile into references, so ordering and propagation remain visible to the graph engine.
 
-Use a generic `DoComposite` while the API is evolving. Add `spec.api` to the definition when application teams need a stable, typed platform kind such as `StaticSite`.
+The typed platform kind is the intended product: add `spec.api` and doplane serves the definition as a real, versioned Kubernetes API (for example `websites.platform.acme.com/v1`). Publishing, group allowlisting, the parameter contract, version bumps, and retirement have their own chapter: [Platform APIs](/guide/platform-apis). Use a generic `DoComposite` directly for debugging or while the API is still evolving.
 
 ## Constraints to preserve
 
@@ -846,6 +846,8 @@ Source: https://dirien.github.io/doplane/reference/conditions
 | `Synced` | the latest intended provider operation succeeded | validation, resolution, execution, or persistence failed |
 
 Provider profiles also expose `SchemaFetched`, `PluginReady`, and `CredentialsReady`. A profile reaches `Ready=True` only when all required stages are usable.
+
+`DoCompositeDefinition` exposes `APIServed` when `spec.api` declares a typed platform API. `True/Served` means the generated CRD is being served. `False` reasons: `GroupNotAllowed` (group missing from the install-time `compositeApiGroups` allowlist), `InvalidSchema` (bad parameters schema, reserved `doplane` parameter, or templates referencing undeclared `${params.*}`), `CRDConflict` (the CRD is owned by another definition or operator), `StoredVersionInUse` (a version was dropped while objects still exist — restore it under `deprecatedVersions` until `status.apiVersions` reports zero objects), and `DeletionBlocked` (typed objects still exist while the definition is being deleted).
 
 ## Failure groups
 

@@ -23,6 +23,7 @@ export default defineConfig({
     siteTitle: 'doplane',
     nav: [
       { text: 'Getting started', link: '/guide/getting-started' },
+      { text: 'Platform APIs', link: '/guide/platform-apis' },
       { text: 'Concepts', link: '/concepts/control-loop' },
       { text: 'Operations', link: '/operations/day-2' },
       { text: 'Agent guide', link: '/reference/agent-context' }
@@ -33,7 +34,8 @@ export default defineConfig({
         items: [
           { text: 'Getting started', link: '/guide/getting-started' },
           { text: 'Discover providers and components', link: '/guide/discover' },
-          { text: 'Choose an API', link: '/guide/choose-an-api' }
+          { text: 'Choose an API', link: '/guide/choose-an-api' },
+          { text: 'Platform APIs', link: '/guide/platform-apis' }
         ]
       },
       {
