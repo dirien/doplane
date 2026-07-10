@@ -217,7 +217,9 @@ func (r *DoResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		if errors.Is(err, pulumido.ErrReadNotSupported) {
 			// pulumi do patch reads before patching; providers without read
 			// support cannot be updated in place. Terminal until spec changes.
-			return r.markSyncFailed(ctx, res, "UpdateNotSupported", err, false)
+			// Flattened so the runner's ReadNotSupported code cannot override
+			// the update-specific reason in markSyncFailed.
+			return r.markSyncFailed(ctx, res, "UpdateNotSupported", errors.New(err.Error()), false)
 		}
 		if errors.Is(err, pulumido.ErrNotFound) {
 			// The external resource vanished under us; clear the recorded id

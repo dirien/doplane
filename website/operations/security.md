@@ -62,13 +62,15 @@ spec:
   properties:
     length: 2
   valuesFrom:
-    - toPath: prefix
+    - toPath: keepers.rotation
       secretKeyRef:
         name: pet-naming
-        key: prefix
+        key: rotation
 ```
 
 Only a placeholder and path-to-environment mapping travel through the object and Job spec. The kubelet injects the value into the runner, which substitutes it immediately before the provider call. Progress logs and error messages redact the value.
+
+Never inject a secret into an identity-forming property (a name, prefix, or separator): the provider-assigned ID would embed the value, and doplane refuses to record it (`SecretInputInID`) — after the external resource may already have been created.
 
 The Secret must exist where the runner Job executes. `valuesFrom` is unsupported for component resources because their checkpoint would persist the input.
 

@@ -14,7 +14,7 @@ export default defineConfig({
     ['meta', { property: 'og:title', content: 'doplane' }],
     ['meta', {
       property: 'og:description',
-      content: 'Cloud resources as Kubernetes objects. No Pulumi programs, stacks, or state files.'
+      content: 'Cloud resources as Kubernetes objects. Pulumi under the hood — the whole Pulumi ecosystem on any cluster.'
     }]
   ],
   markdown: { lineNumbers: true },
