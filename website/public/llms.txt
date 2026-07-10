@@ -1,0 +1,22 @@
+# doplane
+
+> Kubernetes operator that reconciles Pulumi provider resources without Pulumi programs, stacks, or state files.
+
+Use the pages below as task context. Preserve the invariants and verify the success conditions stated on each page.
+
+## Documentation
+
+- [Getting started](https://dirien.github.io/doplane/guide/getting-started)
+- [Choose an API](https://dirien.github.io/doplane/guide/choose-an-api)
+- [Control loop and state](https://dirien.github.io/doplane/concepts/control-loop)
+- [Dependencies and composites](https://dirien.github.io/doplane/concepts/dependencies)
+- [Day-2 operations](https://dirien.github.io/doplane/operations/day-2)
+- [Security and tenancy](https://dirien.github.io/doplane/operations/security)
+- [Repository context for agents](https://dirien.github.io/doplane/reference/agent-context)
+- [Conditions and failures](https://dirien.github.io/doplane/reference/conditions)
+
+## Source
+
+- [Repository](https://github.com/dirien/doplane)
+- [Agent instructions](https://github.com/dirien/doplane/blob/main/AGENTS.md)
+- [Examples](https://github.com/dirien/doplane/tree/main/examples)

@@ -1,0 +1,758 @@
+# doplane
+
+> Kubernetes operator that reconciles Pulumi provider resources without Pulumi programs, stacks, or state files.
+
+Use the pages below as task context. Preserve the invariants and verify the success conditions stated on each page.
+
+## Documentation
+
+- [Getting started](https://dirien.github.io/doplane/guide/getting-started)
+- [Choose an API](https://dirien.github.io/doplane/guide/choose-an-api)
+- [Control loop and state](https://dirien.github.io/doplane/concepts/control-loop)
+- [Dependencies and composites](https://dirien.github.io/doplane/concepts/dependencies)
+- [Day-2 operations](https://dirien.github.io/doplane/operations/day-2)
+- [Security and tenancy](https://dirien.github.io/doplane/operations/security)
+- [Repository context for agents](https://dirien.github.io/doplane/reference/agent-context)
+- [Conditions and failures](https://dirien.github.io/doplane/reference/conditions)
+
+## Source
+
+- [Repository](https://github.com/dirien/doplane)
+- [Agent instructions](https://github.com/dirien/doplane/blob/main/AGENTS.md)
+- [Examples](https://github.com/dirien/doplane/tree/main/examples)
+
+# Getting started
+
+Source: https://dirien.github.io/doplane/guide/getting-started
+
+# Getting started
+
+<div class="agent-contract">
+  <p><strong>Agent goal:</strong> install doplane on a local kind cluster and prove that one <code>DoResource</code> reaches <code>Ready=True</code>. Stop if an existing cluster or cloud resource could be affected.</p>
+</div>
+
+This path uses the `random` provider, so it needs no cloud account and creates no billable resource.
+
+## Prerequisites
+
+Use a machine with these tools:
+
+- Docker or another container runtime supported by the Makefile
+- Go 1.24 or later
+- `kind`
+- `kubectl`
+- GNU Make
+
+The build creates two images. The manager watches Kubernetes objects; the runner image executes provider operations in short-lived Jobs.
+
+## 1. Clone and create the cluster
+
+```sh
+git clone https://github.com/dirien/doplane.git
+cd doplane
+
+kind create cluster --name doplane
+```
+
+Confirm that `kubectl config current-context` prints `kind-doplane` before continuing.
+
+## 2. Build and load both images
+
+```sh
+make docker-build docker-build-runner \
+  IMG=doplane:dev \
+  RUNNER_IMG=doplane-runner:dev
+
+kind load docker-image doplane:dev doplane-runner:dev --name doplane
+```
+
+Do not replace the runner image with the manager image. The manager is distroless and contains neither `pulumi` nor provider plugins.
+
+## 3. Install CRDs and deploy
+
+```sh
+make install deploy \
+  IMG=doplane:dev \
+  RUNNER_IMG=doplane-runner:dev
+
+kubectl -n doplane-system rollout status deployment/doplane-controller-manager \
+  --timeout=2m
+```
+
+If your checkout deploys to another namespace, locate the manager with:
+
+```sh
+kubectl get deployments --all-namespaces | grep doplane
+```
+
+## 4. Reconcile a resource
+
+```sh
+kubectl apply -f examples/01-simple-random-pet.yaml
+kubectl wait doresource/pet-simple --for=condition=Ready --timeout=2m
+kubectl get doresource pet-simple \
+  -o jsonpath='{.status.id}{"\n"}{.status.conditions}{"\n"}'
+```
+
+The resource has succeeded when:
+
+- `.status.id` contains a generated pet name;
+- `Ready=True` reports that the external resource exists;
+- `Synced=True` reports that the last provider operation succeeded;
+- a completed runner Job exists in the runner namespace.
+
+Inspect the full object and recent events when a condition stays false:
+
+```sh
+kubectl describe doresource pet-simple
+kubectl get jobs --all-namespaces
+```
+
+## 5. Make a declarative change
+
+```sh
+kubectl patch doresource pet-simple --type merge \
+  -p '{"spec":{"properties":{"length":3,"prefix":"docs"}}}'
+kubectl get doresource pet-simple -w
+```
+
+The `random` provider does not support every read or update operation. A terminal `UpdateNotSupported` condition is provider behavior, not proof that the control loop is broken. Use a provider resource with read and patch support when testing drift correction.
+
+## Clean up
+
+```sh
+kubectl delete doresource pet-simple
+kind delete cluster --name doplane
+```
+
+Deletion waits for the provider delete unless `spec.deletionPolicy` is `Orphan`.
+
+## Next task
+
+Choose the right abstraction before adding a cloud resource: [raw, provider-backed, typed, or composite API](/guide/choose-an-api).
+
+
+---
+
+# Choose an API
+
+Source: https://dirien.github.io/doplane/guide/choose-an-api
+
+# Choose an API
+
+<div class="agent-contract">
+  <p><strong>Agent goal:</strong> select the smallest doplane API that preserves platform ownership. Prefer a curated API when application teams should not control provider tokens, versions, or credentials.</p>
+</div>
+
+## Decision table
+
+| Task | API | Owner | What the consumer sees |
+| --- | --- | --- | --- |
+| Explore one provider resource | `DoResource` with `spec.package` | platform engineer | Pulumi token and raw properties |
+| Pin a provider and restrict resource types | `DoProvider` + `providerRef` | platform team | provider profile name |
+| Let a tenant own its provider pin and Secret | `DoProviderConfig` + `providerRef.kind` | tenant team | namespaced provider profile |
+| Expose one provider type as Kubernetes-native | `DoProvider.spec.typedResources` | platform team | generated kind and `spec.forProvider` |
+| Bundle a dependency graph | `DoCompositeDefinition` + `DoComposite` | platform team | definition name and parameters |
+| Expose a graph as a typed platform API | `DoCompositeDefinition.spec.api` | platform team | generated kind with a validated spec |
+
+## Raw resource
+
+Use a raw resource for exploration or low-level platform work:
+
+```yaml
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoResource
+metadata:
+  name: pet
+spec:
+  type: random:index/randomPet:RandomPet
+  package: random@4.21.0
+  properties:
+    length: 2
+```
+
+Pin `spec.package`. An unpinned package can resolve differently across reconciles and emits a warning event.
+
+## Provider-backed resource
+
+Declare the package and allow-list once:
+
+```yaml
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoProvider
+metadata:
+  name: random
+spec:
+  package: random@4.21.0
+  allowedResources:
+    - index/randomPet
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoResource
+metadata:
+  name: pet
+spec:
+  type: random:index/randomPet:RandomPet
+  providerRef:
+    name: random
+  properties:
+    length: 2
+```
+
+Wait for the provider profile before creating consumers:
+
+```sh
+kubectl wait doprovider/random --for=condition=Ready --timeout=2m
+```
+
+`DoProvider` is cluster-scoped. Use `kind: DoProviderConfig` in `providerRef` for a same-namespace, tenant-owned profile.
+
+## Typed provider resource
+
+Add a full token to `DoProvider.spec.typedResources`. doplane fetches the provider schema and creates a CRD in `typed.do.pulumi.com`. The generated object exposes `spec.forProvider`, `kubectl explain`, printer columns, and per-kind RBAC. Its controller creates an owned `DoResource` mirror.
+
+Use this API when consumers need one provider resource but should not type a Pulumi token. Check [`examples/12-typed-private-registry-component-provider.yaml`](https://github.com/dirien/doplane/blob/main/examples/12-typed-private-registry-component-provider.yaml) for the complete registration flow.
+
+## Composite
+
+A `DoCompositeDefinition` renders a graph of ordinary `DoResource` children. `${resources.*}` expressions compile into references, so ordering and propagation remain visible to the graph engine.
+
+Use a generic `DoComposite` while the API is evolving. Add `spec.api` to the definition when application teams need a stable, typed platform kind such as `StaticSite`.
+
+## Constraints to preserve
+
+- Keep raw provider properties out of application-facing composites.
+- Put package versions and credential references in provider profiles.
+- Use `allowedResources` to enforce the approved surface, not as documentation only.
+- Treat generated typed CRDs as controller-owned. Change the source profile or definition instead of patching generated CRDs.
+- Test a composite definition with a credential-free provider before introducing billable resources.
+
+
+---
+
+# Control loop and state
+
+Source: https://dirien.github.io/doplane/concepts/control-loop
+
+# Control loop and state
+
+<div class="agent-contract">
+  <p><strong>Agent goal:</strong> change reconciliation without violating at-most-once mutations, live-object reads, or status durability. Read <code>internal/AGENTS.md</code> before editing controller or runner code.</p>
+</div>
+
+## Reconciliation path
+
+```text
+DoResource event
+  → resolve provider and references
+  → fetch and trim the provider schema
+  → validate properties
+  → create or adopt one deterministic runner Job
+  → execute one typed pulumi do operation
+  → persist ID, outputs, hash, generation, and conditions
+```
+
+The manager never runs provider plugins. It creates a hardened Job for each operation and reads one machine-readable result envelope. Schema fetches use the same isolated path.
+
+| Kubernetes event | Provider operation |
+| --- | --- |
+| object created | validate, then `create` |
+| resolved properties change | `patch` |
+| poll interval expires | `read`; recreate if the resource vanished |
+| object deleted | `delete`, unless the policy is `Orphan` |
+
+## State contract
+
+The Kubernetes object is the durable record:
+
+- `status.id` identifies the provider resource.
+- `status.outputs` stores the last full provider state.
+- `status.appliedHash` detects direct and dependency-driven input changes.
+- `status.observedGeneration` records the applied spec generation.
+- `status.engineState` stores the checkpoint for component resources.
+- `status.conditions` reports `Ready` and `Synced` independently.
+
+There is no Pulumi stack or state file to recover. Losing the custom resource or etcd state loses doplane's management record. Back up the cluster accordingly.
+
+## Mutation durability
+
+Runner Jobs have deterministic names derived from the owner and operation input. On retry, the controller adopts an existing Job instead of repeating a cloud mutation. Completed mutation Jobs outlive controller restarts long enough for the manager to consume their result; read Jobs can expire quickly.
+
+Preserve these rules in code changes:
+
+1. Read the primary object through the live API reader before a cloud call.
+2. Never repeat a mutation when its result may already exist.
+3. Write status after a successful operation with conflict retry and a context that survives reconcile cancellation.
+4. Include input Secret resource versions in operation identity so a rotation cannot adopt a stale result.
+5. Keep structured result state intact; redact progress and error channels separately.
+
+## Schema validation
+
+Before any provider call, doplane fetches the package schema and validates `spec.properties` against the resource's `inputProperties` and `requiredInputs`. Unknown fields, missing required inputs, and primitive type mismatches end with `Synced=False` and `ValidationFailed`; no mutation Job runs.
+
+Schemas are cached by package. With the writable plugin cache enabled, a pinned plugin installs once under a per-plugin filesystem lock and later Jobs reuse it.
+
+## Component resources
+
+Pulumi component resources do not expose stateless CRUD. doplane generates a one-resource program inside the Job, runs an ephemeral engine against a temporary `file://` backend, and persists the exported checkpoint in `status.engineState`. Updates and deletes import that checkpoint.
+
+Component input secrets cannot use `spec.valuesFrom`: the engine checkpoint would persist them. Treat `engineState` as sensitive-adjacent data.
+
+
+---
+
+# Dependencies and composites
+
+Source: https://dirien.github.io/doplane/concepts/dependencies
+
+# Dependencies and composites
+
+<div class="agent-contract">
+  <p><strong>Agent goal:</strong> express ordering as data. Use references or composite expressions; do not add sleeps, imperative apply order, or polling scripts.</p>
+</div>
+
+## References form the graph
+
+Each `spec.references` entry copies one field from another `DoResource` in the same namespace into a property:
+
+```yaml
+spec:
+  type: aws:s3/bucketPolicy:BucketPolicy
+  references:
+    - toPath: bucket
+      from:
+        name: assets
+        fieldPath: status.outputs.bucket
+    - toPath: policy
+      from:
+        name: assets
+        fieldPath: status.outputs.arn
+      template: '{"Statement":[{"Resource":["${value}","${value}/*"]}]}'
+```
+
+The downstream resource waits with `WaitingForDependency` until the source is ready. When the source value changes, the resolved-property hash changes and the downstream resource patches even if its own generation did not change.
+
+Valid source paths are `status.id` and paths below `status.outputs`. `toPath` supports dotted object fields and existing array indexes such as `rules[0].id`.
+
+## Teardown and cycle rules
+
+- References resolve only within one namespace.
+- A referenced resource refuses external deletion while dependents remain.
+- Deleting a graph therefore proceeds in reverse dependency order.
+- A cycle sets terminal conditions on the participating resources; it never breaks the cycle by guessing an order.
+- `DoUsage` can declare a dependency that exists outside this reference graph and blocks deletion until removed.
+
+## Composite expressions
+
+A `DoCompositeDefinition` renders templates into child resources. These expressions are available:
+
+| Expression | Resolves to |
+| --- | --- |
+| `${params.region}` | an input parameter |
+| `${self.name}` | composite name |
+| `${self.namespace}` | composite namespace |
+| `${resources.bucket.id}` | sibling provider ID |
+| `${resources.bucket.outputs.arn}` | sibling output |
+
+Sibling expressions compile into normal `spec.references`; they inherit readiness gating, propagation, cycle detection, and ordered teardown.
+
+```yaml
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: payments-identity
+spec:
+  definition: pet-identity
+  parameters:
+    team: payments
+```
+
+Every child remains observable with `kubectl get doresources`. Use the composite's `status.resources`, `status.readyResources`, and `status.revision` for the roll-up view.
+
+## Revision safety
+
+Every definition edit creates an immutable `DoCompositeDefinitionRevision`.
+
+- `updatePolicy: Automatic` follows the latest revision.
+- `updatePolicy: Manual` stays on its recorded revision.
+- `revisionRef` pins one named revision and overrides the policy.
+
+Choose `Manual` or an explicit revision for production APIs that require staged rollout. A definition edit can patch, replace, create, or delete child cloud resources.
+
+## Verification
+
+For a graph change, verify more than aggregate readiness:
+
+```sh
+kubectl get docomposite <name> -o yaml
+kubectl get doresources -l do.pulumi.com/composite=<name> -o yaml
+kubectl get docompositedefinitionrevisions
+```
+
+Confirm child ownership, reference compilation, selected revision, and reverse-order deletion behavior.
+
+
+---
+
+# Day-2 operations
+
+Source: https://dirien.github.io/doplane/operations/day-2
+
+# Day-2 operations
+
+<div class="agent-contract">
+  <p><strong>Agent goal:</strong> diagnose from conditions and events before changing the spec. Cloud mutations require explicit intent; never approve replacement or remove protection as a generic retry.</p>
+</div>
+
+## Observe one resource
+
+```sh
+kubectl get doresource <name> -o wide
+kubectl get doresource <name> -o yaml
+kubectl describe doresource <name>
+kubectl get jobs --all-namespaces --sort-by=.metadata.creationTimestamp
+```
+
+`Ready=True` means the external resource exists. `Synced=True` means the latest provider operation succeeded. Read both; a resource can still exist after a failed update.
+
+## Trigger or tune reconciliation
+
+doplane accepts Crossplane-compatible lifecycle annotations:
+
+```sh
+# Wake a settled resource. Change the value for each request.
+kubectl annotate doresource <name> \
+  crossplane.io/reconcile-requested-at="$(date -u +%s)" --overwrite
+
+# Override the default 10-minute drift interval.
+kubectl annotate doresource <name> \
+  crossplane.io/poll-interval=1m --overwrite
+
+# Suspend cloud calls.
+kubectl annotate doresource <name> \
+  crossplane.io/paused=true --overwrite
+```
+
+Remove the pause annotation to resume. A paused resource does not correct drift or process spec changes.
+
+## Adopt an existing resource
+
+Set the provider ID before the first create:
+
+```sh
+kubectl annotate doresource <name> \
+  crossplane.io/external-name='<provider-id>'
+```
+
+The next read imports observed state. Confirm that the provider implements read/import for this resource type. A wrong ID must fail visibly; do not fall through to create.
+
+## Handle replacement
+
+Immutable input changes stop at `ReplacementRequired`. The default is protected unless `spec.protect` is explicitly `false`.
+
+Review the diff, dependents, deletion policy, and provider identity rules. Then approve only the current generation:
+
+```sh
+generation=$(kubectl get doresource <name> -o jsonpath='{.metadata.generation}')
+kubectl annotate doresource <name> \
+  do.pulumi.com/approve-replacement="$generation" --overwrite
+```
+
+doplane creates before deleting when identity permits; otherwise it deletes before creating. A later generation needs separate approval.
+
+## Delete or orphan
+
+`spec.deletionPolicy` defaults to `Delete`. Set `Orphan` before deletion when the cloud resource must survive:
+
+```sh
+kubectl patch doresource <name> --type merge \
+  -p '{"spec":{"deletionPolicy":"Orphan"}}'
+kubectl delete doresource <name>
+```
+
+References and `DoUsage` objects can block teardown. Remove dependents in reverse order; do not strip the finalizer while an external resource still needs deletion.
+
+## Roll out a composite revision
+
+Inspect available revisions and the current pin:
+
+```sh
+kubectl get docompositedefinitionrevisions
+kubectl get docomposite <name> \
+  -o jsonpath='{.status.revision}{"\n"}{.spec.updatePolicy}{"\n"}'
+```
+
+For a manual rollout, set `spec.revisionRef.name` to the reviewed revision. Verify each rendered child, not only the composite roll-up.
+
+## Escalation data
+
+Capture these facts in an issue or agent handoff:
+
+- object YAML with Secret values removed;
+- `Ready` and `Synced` reason/message;
+- manager and runner image references;
+- package pin and full resource type token;
+- runner Job phase and logs, with credentials redacted;
+- whether the operation was create, read, patch, replace, or delete.
+
+
+---
+
+# Security and tenancy
+
+Source: https://dirien.github.io/doplane/operations/security
+
+# Security and tenancy
+
+<div class="agent-contract">
+  <p><strong>Agent goal:</strong> keep credentials out of the manager and values out of manifests. Treat status and component checkpoints as sensitive-adjacent even when logs are redacted.</p>
+</div>
+
+## Execution boundary
+
+The manager image has no Pulumi CLI, provider plugins, or cloud credentials. Each runner Job:
+
+- runs as non-root with a read-only root filesystem;
+- drops Linux capabilities and uses `RuntimeDefault` seccomp;
+- disables service-account token mounting;
+- receives one typed operation document;
+- mounts or injects credentials only for that operation;
+- writes temporary backend and input files under an isolated writable path.
+
+Do not move provider execution into the manager to reduce Job overhead. The proposed warm runner keeps a separate trust boundary; see `docs/RUNNER_SERVICE_DESIGN.md`.
+
+## Runner namespace modes
+
+| Mode | Job namespace | Credential ownership | Use when |
+| --- | --- | --- | --- |
+| `operator` (default) | operator namespace | one shared Secret | one platform identity serves the cluster |
+| `resource` | resource namespace | tenant namespace Secret | each tenant owns an isolated cloud identity |
+
+Configure per-resource runners with Helm:
+
+```sh
+helm upgrade --install doplane deploy/doplane \
+  --namespace doplane-system \
+  --create-namespace \
+  --set runner.namespaceMode=resource
+```
+
+In `resource` mode, namespace deletion can outlive the place where a delete Job would run. doplane falls back to the operator namespace for cleanup. Keep a narrowly scoped cleanup identity there if tenant resources must be deleted during namespace teardown.
+
+## Watch scope
+
+`watchNamespaces` limits namespaced reconciliation. The Helm chart replaces broad manager RBAC with Roles in the selected namespaces while retaining the minimum cluster access required for cluster-scoped definitions.
+
+```sh
+helm upgrade --install doplane deploy/doplane \
+  --namespace doplane-system \
+  --set 'watchNamespaces={team-a,team-b}' \
+  --set runner.namespaceMode=resource
+```
+
+Watch scope and credential placement solve different problems. Configure both for a multi-tenant installation.
+
+## Secret inputs
+
+Use `spec.valuesFrom` to inject a Secret key into one property:
+
+```yaml
+spec:
+  properties:
+    length: 2
+  valuesFrom:
+    - toPath: prefix
+      secretKeyRef:
+        name: pet-naming
+        key: prefix
+```
+
+Only a placeholder and path-to-environment mapping travel through the object and Job spec. The kubelet injects the value into the runner, which substitutes it immediately before the provider call. Progress logs and error messages redact the value.
+
+The Secret must exist where the runner Job executes. `valuesFrom` is unsupported for component resources because their checkpoint would persist the input.
+
+## Outputs and connection Secrets
+
+Provider outputs are not universally secret. `status.outputs` preserves structured provider data so selected values can round-trip into a connection Secret. A provider that echoes an input may therefore put that value in status.
+
+Use `writeConnectionSecretToRef` and `connectionDetails` to publish selected outputs, but do not assume this removes them from status:
+
+```yaml
+spec:
+  writeConnectionSecretToRef:
+    name: database-connection
+  connectionDetails:
+    - name: endpoint
+      fromFieldPath: status.outputs.endpoint
+    - name: resourceID
+      fromFieldPath: status.id
+```
+
+Encrypt etcd at rest, restrict access to doplane objects and Secrets, and avoid returning secret material from provider resources where possible.
+
+## Plugin cache
+
+The optional shared PVC stores executable provider plugins. It must never store credentials, generated programs, or backend state. Limit write access to runner pods and populate air-gapped caches from a trusted artifact source.
+
+
+---
+
+# Repository context for agents
+
+Source: https://dirien.github.io/doplane/reference/agent-context
+
+# Repository context for agents
+
+<div class="agent-contract">
+  <p><strong>Agent contract:</strong> read the closest <code>AGENTS.md</code> before editing. Preserve user changes, use the smallest relevant test while iterating, and show command output before claiming success.</p>
+</div>
+
+This page is a task map, not a substitute for repository instructions. The root [`AGENTS.md`](https://github.com/dirien/doplane/blob/main/AGENTS.md) has precedence rules, exact commands, and contribution boundaries.
+
+## Source map
+
+| Area | Source | Scoped instructions | Primary checks |
+| --- | --- | --- | --- |
+| API types and validation | `api/v1alpha1/` | root `AGENTS.md` | `make manifests generate`, `make test` |
+| Reconciliation and graphs | `internal/controller/` | `internal/AGENTS.md` | focused envtest, then `make test` |
+| Job and exec runners | `internal/pulumido/` | `internal/AGENTS.md` | package tests, then `make test` |
+| Shared operation envelope | `internal/runnerops/` | `internal/AGENTS.md` | package tests, race detector |
+| Kustomize and Helm | `deploy/` | `deploy/AGENTS.md` | `make helm-lint`, `make helm-template` |
+| User examples | `examples/` | root `AGENTS.md` | credential-free examples first |
+| Documentation site | `website/` | root `AGENTS.md` | `npm ci`, `npm run docs:build` |
+| GitHub workflows | `.github/workflows/` | workflow `AGENTS.md` | syntax plus matching local command |
+
+## Non-negotiable invariants
+
+1. Kubernetes status is the external-resource state store.
+2. A cloud mutation must run at most once when its prior result may exist.
+3. `DoResource.spec.type` is immutable.
+4. Primary-object reads before provider calls use the live API reader.
+5. Status persistence survives reconcile cancellation and retries conflicts.
+6. The manager never receives provider credentials or executes plugins.
+7. Secret values stay out of manifests, events, and logs; structured status remains sensitive-adjacent.
+8. References remain same-namespace and enforce reverse-order teardown.
+9. Kustomize and Helm behavior stay equivalent.
+
+## Commands
+
+```sh
+go build ./...
+make fmt
+make lint
+make test
+make helm-lint
+make helm-template
+```
+
+Use a focused command after each change. Run the full relevant gates before committing a multi-file or shared-code change. E2E creates a cluster and takes several minutes; follow repository authorization rules before running it.
+
+## Change recipes
+
+### Add or change a CRD field
+
+1. Edit the Go type and kubebuilder markers in `api/v1alpha1/`.
+2. Update controller behavior and focused tests.
+3. Run `make manifests generate`; never hand-edit generated CRDs or RBAC.
+4. Confirm the Helm CRD copy stays synchronized.
+5. Update examples and this site when user behavior changed.
+
+### Change runner behavior
+
+1. Decide whether the operation contract belongs in `runnerops` or the execution transport belongs in `pulumido`.
+2. Preserve deterministic operation identity and adoption.
+3. Test cancellation, retries, missing output, and redaction.
+4. Verify both in-cluster Job mode and local exec mode where applicable.
+
+### Add a provider example
+
+1. Pin the package version.
+2. State whether the example creates billable resources.
+3. Keep credential names symbolic and out of YAML values.
+4. Prefer a provider profile over repeating package and Secret details.
+5. Include cleanup and observable readiness commands.
+
+### Change deployment configuration
+
+1. Read `deploy/AGENTS.md`.
+2. Mirror the behavior in Kustomize and Helm.
+3. Keep manager and runner images separate.
+4. Render both forms and inspect the diff.
+
+## Agent-readable entry points
+
+- [`llms.txt`](https://dirien.github.io/doplane/llms.txt) lists the documentation pages and source context.
+- [`llms-full.txt`](https://dirien.github.io/doplane/llms-full.txt) concatenates the technical guides for one-request ingestion.
+- The **Markdown for agents** menu on each page copies, opens, or downloads the source Markdown.
+
+
+---
+
+# Conditions and failures
+
+Source: https://dirien.github.io/doplane/reference/conditions
+
+# Conditions and failures
+
+<div class="agent-contract">
+  <p><strong>Agent goal:</strong> classify the failing stage from the condition reason before editing code or retrying. Preserve the first actionable provider or validation message in any handoff.</p>
+</div>
+
+## Condition model
+
+| Condition | True means | False means |
+| --- | --- | --- |
+| `Ready` | the external resource exists and current state is recorded | the resource is absent, waiting, deleting, or not yet observed |
+| `Synced` | the latest intended provider operation succeeded | validation, resolution, execution, or persistence failed |
+
+Provider profiles also expose `SchemaFetched`, `PluginReady`, and `CredentialsReady`. A profile reaches `Ready=True` only when all required stages are usable.
+
+## Failure groups
+
+| Reason or group | Stage | First checks | Mutation ran? |
+| --- | --- | --- | --- |
+| `WaitingForDependency` | reference resolution | source name, namespace, readiness, field path | no |
+| cycle-related reason | graph validation | all references among reported objects | no |
+| `ValidationFailed` | provider schema validation | required, unknown, and primitive-typed properties | no |
+| `ProviderPackageMismatch` | provider resolution | `spec.package` versus profile package | no |
+| `ResourceNotAllowed` | provider policy | full token and profile `allowedResources` | no |
+| `RegistryAuthMissing` | component registry | runner Secret and `PULUMI_ACCESS_TOKEN` | no |
+| `RegistryResolveFailed` | component registry | package reference, token scope, network | no |
+| plugin install failure | runner preparation | pin, cache permissions, egress, disk | no provider call |
+| `CreateFailed`, `UpdateFailed`, `ReadFailed`, or `DeleteFailed` | execution | condition message, runner Job, image pull, provider output | possibly; inspect the retained Job before retrying |
+| `EngineFailed` | component engine | runner result and checkpoint handling | possibly |
+| `UpdateNotSupported` | provider capability | provider read/patch support | attempted |
+| `ReplacementRequired` | lifecycle safety | immutable inputs, protect, generation | patch attempted; replacement did not run |
+| delete blocked | dependency safety | references and `DoUsage` objects | no delete |
+
+The exact reason set evolves with controller code. Treat this table as routing guidance and the object condition message as the authoritative detail.
+
+## Diagnostic sequence
+
+```sh
+kubectl get doresource <name> -o jsonpath='{range .status.conditions[*]}{.type}{"="}{.status}{" reason="}{.reason}{"\n"}{.message}{"\n\n"}{end}'
+kubectl describe doresource <name>
+kubectl get jobs --all-namespaces \
+  -l do.pulumi.com/owner-name=<name> \
+  --sort-by=.metadata.creationTimestamp
+```
+
+If labels differ for the current controller version, find recent Jobs by timestamp and owner references. Read runner logs only after checking whether the Job may still be active.
+
+## Retry rules
+
+- Fix terminal input or policy failures before retrying; repeated reconciliation cannot change them.
+- Change `crossplane.io/reconcile-requested-at` to wake a settled transient failure.
+- Never delete a completed mutation Job merely to force another create, patch, or delete. Its result may be the only proof that the cloud call already ran.
+- Never remove a finalizer as a routine recovery step.
+- Approve replacement only after reviewing the current generation and blast radius.
+
+## Proving recovery
+
+Recovery requires all relevant evidence:
+
+1. `Synced=True` for the corrected generation.
+2. `Ready=True` when the external resource should exist.
+3. `status.observedGeneration` equals `metadata.generation`.
+4. The provider ID and expected outputs are present.
+5. Dependents have propagated any changed output.
