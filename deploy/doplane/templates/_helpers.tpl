@@ -267,5 +267,9 @@ Build an image reference from fullName, repository, tag, and digest fields.
 {{- end -}}
 
 {{- define "doplane.runnerImage" -}}
+{{- if and (not .Values.runnerImage.fullName) (not .Values.runnerImage.digest) (not .Values.runnerImage.tag) -}}
+{{- printf "%s:%s" .Values.runnerImage.repository .Chart.AppVersion -}}
+{{- else -}}
 {{- include "doplane.imageRef" .Values.runnerImage -}}
+{{- end -}}
 {{- end -}}
