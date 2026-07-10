@@ -17,22 +17,52 @@ hero:
       link: https://github.com/dirien/doplane
 
 features:
-  - icon: "◈"
+  - icon:
+      light: /icons/arrows-clockwise.svg
+      dark: /icons/arrows-clockwise-dark.svg
+      width: 28
+      height: 28
+      alt: reconcile loop
     title: One declarative control loop
     details: Apply a DoResource. doplane validates it, calls the provider, and records observed state in the object's status.
-  - icon: "⌁"
+  - icon:
+      light: /icons/plugs-connected.svg
+      dark: /icons/plugs-connected-dark.svg
+      width: 28
+      height: 28
+      alt: connected plugs
     title: The whole Pulumi ecosystem
     details: Any provider in the Pulumi Registry works. Pin the package, allow-list resource types, hand teams a Kubernetes API. Components written in TypeScript, Go, Python, C# or Java come along too.
-  - icon: "◇"
+  - icon:
+      light: /icons/stack.svg
+      dark: /icons/stack-dark.svg
+      width: 28
+      height: 28
+      alt: stacked layers
     title: Composable platform APIs
     details: Turn dependency graphs into reusable composites or generated typed CRDs for application teams.
-  - icon: "⊘"
+  - icon:
+      light: /icons/database.svg
+      dark: /icons/database-dark.svg
+      width: 28
+      height: 28
+      alt: database
     title: No separate state service
     details: Resource IDs, outputs, and component checkpoints live with the Kubernetes object in etcd.
-  - icon: "⎈"
+  - icon:
+      light: /icons/shield-check.svg
+      dark: /icons/shield-check-dark.svg
+      width: 28
+      height: 28
+      alt: shield with check mark
     title: Isolated execution
     details: Each provider operation runs in a hardened, short-lived Kubernetes Job. The manager holds no cloud credentials.
-  - icon: "M↓"
+  - icon:
+      light: /icons/robot.svg
+      dark: /icons/robot-dark.svg
+      width: 28
+      height: 28
+      alt: robot
     title: Documentation built for agents
     details: Copy or download any page as Markdown, or load llms.txt for a repository-wide task map.
 ---
