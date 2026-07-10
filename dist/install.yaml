@@ -12,6 +12,224 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
+  name: docompositedefinitionrevisions.do.pulumi.com
+spec:
+  group: do.pulumi.com
+  names:
+    kind: DoCompositeDefinitionRevision
+    listKind: DoCompositeDefinitionRevisionList
+    plural: docompositedefinitionrevisions
+    shortNames:
+    - docdrev
+    singular: docompositedefinitionrevision
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.definitionName
+      name: DEFINITION
+      type: string
+    - jsonPath: .spec.revision
+      name: REVISION
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: AGE
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          DoCompositeDefinitionRevision is an immutable snapshot of a
+          DoCompositeDefinition. Editing a definition creates the next revision;
+          composites render from the revision their update policy selects, so a
+          definition edit never silently rewrites pinned instances.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              DoCompositeDefinitionRevisionSpec is the immutable snapshot of one
+              definition generation.
+            properties:
+              definition:
+                description: Definition is the snapshotted definition spec.
+                properties:
+                  api:
+                    description: |-
+                      API exposes this definition as its own typed, namespaced CRD (e.g.
+                      `kind: Website` in `platform.acme.com`): users apply the platform
+                      kind with their parameters as spec, instead of a generic DoComposite.
+                      Each typed object is translated into an owned DoComposite.
+                    properties:
+                      deprecatedVersions:
+                        description: |-
+                          DeprecatedVersions are previously served versions kept served (and
+                          marked deprecated) while their objects migrate. Remove a version
+                          only when the definition's status reports zero objects for it.
+                        items:
+                          type: string
+                        type: array
+                        x-kubernetes-list-type: set
+                      group:
+                        description: |-
+                          Group of the generated API (e.g. platform.acme.com). Must be on the
+                          operator's install-time allowlist (Helm value compositeApiGroups),
+                          which also renders the matching manager RBAC. Empty uses the fixed
+                          typed.do.pulumi.com group.
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+$
+                        type: string
+                      kind:
+                        description: Kind of the generated API (e.g. Website).
+                        pattern: ^[A-Z][A-Za-z0-9]*$
+                        type: string
+                      parametersSchema:
+                        description: |-
+                          ParametersSchema is the OpenAPI v3 schema validating the typed
+                          object's spec — the single source of the parameter contract. It also
+                          validates DoComposite parameters at render time and template
+                          ${params.*} usage at apply time. Empty accepts any object. The
+                          property name "doplane" is reserved for doplane's lifecycle knobs.
+                        x-kubernetes-preserve-unknown-fields: true
+                      plural:
+                        description: Plural resource name; defaults to lowercase(kind)
+                          + "s".
+                        type: string
+                      version:
+                        description: |-
+                          Version served and referenced by the templates (storage version).
+                          Defaults to v1alpha1. Bumping it keeps prior versions only if they
+                          are listed in deprecatedVersions; generated CRDs use conversion
+                          strategy None, so every served version must stay round-trippable —
+                          a new required parameter is a new API, not a new version.
+                        pattern: ^v[0-9]+((alpha|beta)[0-9]+)?$
+                        type: string
+                    required:
+                    - kind
+                    type: object
+                    x-kubernetes-validations:
+                    - message: spec.api.kind is immutable
+                      rule: self.kind == oldSelf.kind
+                    - message: spec.api.plural is immutable
+                      rule: has(self.plural) == has(oldSelf.plural) && (!has(self.plural)
+                        || self.plural == oldSelf.plural)
+                    - message: spec.api.group is immutable
+                      rule: has(self.group) == has(oldSelf.group) && (!has(self.group)
+                        || self.group == oldSelf.group)
+                  resources:
+                    description: Resources are the templates rendered into DoResources.
+                    items:
+                      description: CompositeResourceTemplate templates one DoResource
+                        of a composite.
+                      properties:
+                        deletionPolicy:
+                          description: DeletionPolicy for the child resource. Defaults
+                            to Delete.
+                          enum:
+                          - Delete
+                          - Orphan
+                          type: string
+                        externalName:
+                          description: |-
+                            ExternalName adopts an existing external resource instead of creating
+                            one: rendered (params/self expressions allowed; sibling resources.*
+                            are not) into the child's crossplane.io/external-name annotation.
+                          type: string
+                        name:
+                          description: |-
+                            Name identifies the resource within the composite; it is referenced
+                            by sibling expressions and suffixes the child object's name.
+                          pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+                          type: string
+                        package:
+                          description: Package pins the provider package (e.g. "aws@7.34.0").
+                          type: string
+                        properties:
+                          description: |-
+                            Properties are the resource inputs; string values may contain
+                            expressions (see DoCompositeDefinitionSpec).
+                          x-kubernetes-preserve-unknown-fields: true
+                        providerRef:
+                          description: |-
+                            ProviderRef resolves package and credentials from a cluster-scoped
+                            DoProvider profile; copied verbatim into the child DoResource.
+                          properties:
+                            kind:
+                              default: DoProvider
+                              description: |-
+                                Kind of the profile: DoProvider (cluster-scoped) or DoProviderConfig
+                                (same namespace as this resource).
+                              enum:
+                              - DoProvider
+                              - DoProviderConfig
+                              type: string
+                            name:
+                              description: Name of the profile object.
+                              minLength: 1
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type:
+                          description: Type is the Pulumi resource type token.
+                          minLength: 1
+                          type: string
+                      required:
+                      - name
+                      - type
+                      type: object
+                    minItems: 1
+                    type: array
+                required:
+                - resources
+                type: object
+                x-kubernetes-validations:
+                - message: spec.api cannot be removed once set; delete the definition
+                    instead
+                  rule: '!has(oldSelf.api) || has(self.api)'
+              definitionName:
+                description: DefinitionName is the DoCompositeDefinition this revision
+                  snapshots.
+                minLength: 1
+                type: string
+              revision:
+                description: |-
+                  Revision numbers the snapshot, monotonically increasing per
+                  definition.
+                format: int64
+                minimum: 1
+                type: integer
+            required:
+            - definition
+            - definitionName
+            - revision
+            type: object
+        type: object
+        x-kubernetes-validations:
+        - message: revisions are immutable
+          rule: self.spec == oldSelf.spec
+    served: true
+    storage: true
+    subresources: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: docompositedefinitions.do.pulumi.com
 spec:
   group: do.pulumi.com
@@ -28,6 +246,12 @@ spec:
     - jsonPath: .status.composites
       name: COMPOSITES
       type: integer
+    - jsonPath: .status.conditions[?(@.type=='APIServed')].status
+      name: SERVED
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='APIServed')].reason
+      name: REASON
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: AGE
       type: date
@@ -65,13 +289,67 @@ spec:
               so\nordering, readiness gating, propagation and ordered teardown are
               handled\nby the resource graph engine. \"$${\" escapes a literal \"${\"."
             properties:
-              requiredParameters:
+              api:
                 description: |-
-                  RequiredParameters lists parameter keys every DoComposite using this
-                  definition must provide.
-                items:
-                  type: string
-                type: array
+                  API exposes this definition as its own typed, namespaced CRD (e.g.
+                  `kind: Website` in `platform.acme.com`): users apply the platform
+                  kind with their parameters as spec, instead of a generic DoComposite.
+                  Each typed object is translated into an owned DoComposite.
+                properties:
+                  deprecatedVersions:
+                    description: |-
+                      DeprecatedVersions are previously served versions kept served (and
+                      marked deprecated) while their objects migrate. Remove a version
+                      only when the definition's status reports zero objects for it.
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                  group:
+                    description: |-
+                      Group of the generated API (e.g. platform.acme.com). Must be on the
+                      operator's install-time allowlist (Helm value compositeApiGroups),
+                      which also renders the matching manager RBAC. Empty uses the fixed
+                      typed.do.pulumi.com group.
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+$
+                    type: string
+                  kind:
+                    description: Kind of the generated API (e.g. Website).
+                    pattern: ^[A-Z][A-Za-z0-9]*$
+                    type: string
+                  parametersSchema:
+                    description: |-
+                      ParametersSchema is the OpenAPI v3 schema validating the typed
+                      object's spec — the single source of the parameter contract. It also
+                      validates DoComposite parameters at render time and template
+                      ${params.*} usage at apply time. Empty accepts any object. The
+                      property name "doplane" is reserved for doplane's lifecycle knobs.
+                    x-kubernetes-preserve-unknown-fields: true
+                  plural:
+                    description: Plural resource name; defaults to lowercase(kind)
+                      + "s".
+                    type: string
+                  version:
+                    description: |-
+                      Version served and referenced by the templates (storage version).
+                      Defaults to v1alpha1. Bumping it keeps prior versions only if they
+                      are listed in deprecatedVersions; generated CRDs use conversion
+                      strategy None, so every served version must stay round-trippable —
+                      a new required parameter is a new API, not a new version.
+                    pattern: ^v[0-9]+((alpha|beta)[0-9]+)?$
+                    type: string
+                required:
+                - kind
+                type: object
+                x-kubernetes-validations:
+                - message: spec.api.kind is immutable
+                  rule: self.kind == oldSelf.kind
+                - message: spec.api.plural is immutable
+                  rule: has(self.plural) == has(oldSelf.plural) && (!has(self.plural)
+                    || self.plural == oldSelf.plural)
+                - message: spec.api.group is immutable
+                  rule: has(self.group) == has(oldSelf.group) && (!has(self.group)
+                    || self.group == oldSelf.group)
               resources:
                 description: Resources are the templates rendered into DoResources.
                 items:
@@ -84,6 +362,12 @@ spec:
                       enum:
                       - Delete
                       - Orphan
+                      type: string
+                    externalName:
+                      description: |-
+                        ExternalName adopts an existing external resource instead of creating
+                        one: rendered (params/self expressions allowed; sibling resources.*
+                        are not) into the child's crossplane.io/external-name annotation.
                       type: string
                     name:
                       description: |-
@@ -99,6 +383,27 @@ spec:
                         Properties are the resource inputs; string values may contain
                         expressions (see DoCompositeDefinitionSpec).
                       x-kubernetes-preserve-unknown-fields: true
+                    providerRef:
+                      description: |-
+                        ProviderRef resolves package and credentials from a cluster-scoped
+                        DoProvider profile; copied verbatim into the child DoResource.
+                      properties:
+                        kind:
+                          default: DoProvider
+                          description: |-
+                            Kind of the profile: DoProvider (cluster-scoped) or DoProviderConfig
+                            (same namespace as this resource).
+                          enum:
+                          - DoProvider
+                          - DoProviderConfig
+                          type: string
+                        name:
+                          description: Name of the profile object.
+                          minLength: 1
+                          type: string
+                      required:
+                      - name
+                      type: object
                     type:
                       description: Type is the Pulumi resource type token.
                       minLength: 1
@@ -112,15 +417,101 @@ spec:
             required:
             - resources
             type: object
+            x-kubernetes-validations:
+            - message: spec.api cannot be removed once set; delete the definition
+                instead
+              rule: '!has(oldSelf.api) || has(self.api)'
           status:
             description: DoCompositeDefinitionStatus reports observed state of a definition.
             properties:
+              apiVersions:
+                description: |-
+                  APIVersions reports each served version of the typed API and how
+                  many objects still use it (the migration signal for version bumps).
+                items:
+                  description: TypedAPIVersionStatus reports one served version of
+                    a definition's API.
+                  properties:
+                    deprecated:
+                      description: Deprecated marks a version served only for migration.
+                      type: boolean
+                    name:
+                      description: Name of the version (e.g. v1alpha1).
+                      type: string
+                    objects:
+                      description: |-
+                        Objects counts typed objects whose manifests last wrote this
+                        version. A deprecated version may be removed once this reaches zero.
+                      format: int32
+                      type: integer
+                  required:
+                  - name
+                  - objects
+                  type: object
+                type: array
               composites:
                 description: |-
                   Composites is the number of DoComposites currently using this
                   definition.
                 format: int32
                 type: integer
+              conditions:
+                description: Conditions (APIServed).
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
             type: object
         type: object
     served: true
@@ -197,6 +588,28 @@ spec:
               parameters:
                 description: Parameters feed the definition's ${params.*} expressions.
                 x-kubernetes-preserve-unknown-fields: true
+              revisionRef:
+                description: |-
+                  RevisionRef pins rendering to one specific
+                  DoCompositeDefinitionRevision, overriding updatePolicy.
+                properties:
+                  name:
+                    description: Name of the revision (e.g. "static-site-v3").
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              updatePolicy:
+                default: Automatic
+                description: |-
+                  UpdatePolicy decides whether definition edits roll out to this
+                  instance: Automatic follows the latest revision; Manual keeps the
+                  revision recorded at first render until revisionRef moves it.
+                enum:
+                - Automatic
+                - Manual
+                type: string
             required:
             - definition
             type: object
@@ -295,6 +708,463 @@ spec:
                   - resourceName
                   type: object
                 type: array
+              revision:
+                description: Revision names the DoCompositeDefinitionRevision last
+                  rendered.
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: doproviderconfigs.do.pulumi.com
+spec:
+  group: do.pulumi.com
+  names:
+    kind: DoProviderConfig
+    listKind: DoProviderConfigList
+    plural: doproviderconfigs
+    shortNames:
+    - doprovcfg
+    singular: doproviderconfig
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.package
+      name: PACKAGE
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: READY
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Ready')].reason
+      name: REASON
+      type: string
+    - jsonPath: .status.dependents
+      name: DEPENDENTS
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: AGE
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          DoProviderConfig is the namespaced twin of the cluster-scoped DoProvider:
+          a tenant-owned provider profile. Its credentials Secret lives in the
+          config's own namespace, so teams pin provider versions and rotate their
+          own credentials without platform involvement. Resources opt in with
+          spec.providerRef.kind: DoProviderConfig (resolved in the resource's
+          namespace); per-tenant credential isolation at runtime requires the
+          per-resource runner namespace mode.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              DoProviderSpec declares platform-level support for one provider package:
+              the pinned version, where its credentials live, and which resources app
+              teams may use. DoResources opt in via spec.providerRef.
+            properties:
+              allowedResources:
+                description: |-
+                  AllowedResources restricts which resource type tokens may use this
+                  provider. Entries are full tokens ("aws:s3/bucketV2:BucketV2"),
+                  module paths ("s3/bucketV2"), module globs ("s3/*") or "*". Empty
+                  allows every resource of the package.
+                items:
+                  type: string
+                type: array
+              credentialKeys:
+                description: |-
+                  CredentialKeys lists keys that must exist in the credentials Secret
+                  (e.g. DIGITALOCEAN_TOKEN). Missing keys surface as
+                  CredentialsReady=False.
+                items:
+                  type: string
+                type: array
+              credentialsSecretRef:
+                description: |-
+                  CredentialsSecretRef names the Secret (in the runner namespace) whose
+                  keys become environment variables of runner pods executing operations
+                  for this provider. Empty keeps the deployment-wide default Secret.
+                properties:
+                  name:
+                    description: Name of the Secret.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              package:
+                description: |-
+                  Package pins the provider package, in the form "name@version"
+                  (e.g. "aws@7.34.0"). An unpinned "name" works but makes operations
+                  non-reproducible and is surfaced with a warning.
+                minLength: 1
+                type: string
+              typedResources:
+                description: |-
+                  TypedResources lists full resource tokens
+                  ("aws:s3/bucketV2:BucketV2") to expose as generated, typed CRDs in
+                  the typed.do.pulumi.com group: app teams then apply `kind: BucketV2`
+                  with schema validation and kubectl explain, never a Pulumi token.
+                  Each typed object is translated into an owned DoResource.
+                items:
+                  type: string
+                type: array
+            required:
+            - package
+            type: object
+          status:
+            description: DoProviderStatus reports the outcome of provider validation.
+            properties:
+              conditions:
+                description: |-
+                  Conditions represent the latest observations (Ready, SchemaFetched,
+                  PluginReady, CredentialsReady).
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              dependents:
+                description: |-
+                  Dependents counts the DoResources currently referencing this
+                  profile.
+                format: int32
+                type: integer
+              lastSchemaFetchTime:
+                description: |-
+                  LastSchemaFetchTime is when the provider schema last validated
+                  successfully.
+                format: date-time
+                type: string
+              observedGeneration:
+                description: ObservedGeneration is the spec generation last reconciled.
+                format: int64
+                type: integer
+              package:
+                description: Package is the resolved package name and version.
+                properties:
+                  name:
+                    description: Name of the provider package.
+                    type: string
+                  version:
+                    description: Version of the provider package as reported by its
+                      schema.
+                    type: string
+                type: object
+              plugin:
+                description: Plugin reports plugin availability.
+                properties:
+                  cachePath:
+                    description: |-
+                      CachePath is the shared plugin cache mount inside runner pods, when
+                      the cache is enabled.
+                    type: string
+                  ready:
+                    description: |-
+                      Ready is true when runner Jobs can execute operations for this
+                      provider without manual plugin installation.
+                    type: boolean
+                type: object
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: doproviders.do.pulumi.com
+spec:
+  group: do.pulumi.com
+  names:
+    kind: DoProvider
+    listKind: DoProviderList
+    plural: doproviders
+    shortNames:
+    - doprov
+    singular: doprovider
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.package
+      name: PACKAGE
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: READY
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Ready')].reason
+      name: REASON
+      type: string
+    - jsonPath: .status.dependents
+      name: DEPENDENTS
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: AGE
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          DoProvider is a cluster-scoped, platform-team-owned provider profile:
+          add a provider once, and app teams consume it through
+          DoResource.spec.providerRef or curated composites without learning
+          plugin versions or credential names.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              DoProviderSpec declares platform-level support for one provider package:
+              the pinned version, where its credentials live, and which resources app
+              teams may use. DoResources opt in via spec.providerRef.
+            properties:
+              allowedResources:
+                description: |-
+                  AllowedResources restricts which resource type tokens may use this
+                  provider. Entries are full tokens ("aws:s3/bucketV2:BucketV2"),
+                  module paths ("s3/bucketV2"), module globs ("s3/*") or "*". Empty
+                  allows every resource of the package.
+                items:
+                  type: string
+                type: array
+              credentialKeys:
+                description: |-
+                  CredentialKeys lists keys that must exist in the credentials Secret
+                  (e.g. DIGITALOCEAN_TOKEN). Missing keys surface as
+                  CredentialsReady=False.
+                items:
+                  type: string
+                type: array
+              credentialsSecretRef:
+                description: |-
+                  CredentialsSecretRef names the Secret (in the runner namespace) whose
+                  keys become environment variables of runner pods executing operations
+                  for this provider. Empty keeps the deployment-wide default Secret.
+                properties:
+                  name:
+                    description: Name of the Secret.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              package:
+                description: |-
+                  Package pins the provider package, in the form "name@version"
+                  (e.g. "aws@7.34.0"). An unpinned "name" works but makes operations
+                  non-reproducible and is surfaced with a warning.
+                minLength: 1
+                type: string
+              typedResources:
+                description: |-
+                  TypedResources lists full resource tokens
+                  ("aws:s3/bucketV2:BucketV2") to expose as generated, typed CRDs in
+                  the typed.do.pulumi.com group: app teams then apply `kind: BucketV2`
+                  with schema validation and kubectl explain, never a Pulumi token.
+                  Each typed object is translated into an owned DoResource.
+                items:
+                  type: string
+                type: array
+            required:
+            - package
+            type: object
+          status:
+            description: DoProviderStatus reports the outcome of provider validation.
+            properties:
+              conditions:
+                description: |-
+                  Conditions represent the latest observations (Ready, SchemaFetched,
+                  PluginReady, CredentialsReady).
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              dependents:
+                description: |-
+                  Dependents counts the DoResources currently referencing this
+                  profile.
+                format: int32
+                type: integer
+              lastSchemaFetchTime:
+                description: |-
+                  LastSchemaFetchTime is when the provider schema last validated
+                  successfully.
+                format: date-time
+                type: string
+              observedGeneration:
+                description: ObservedGeneration is the spec generation last reconciled.
+                format: int64
+                type: integer
+              package:
+                description: Package is the resolved package name and version.
+                properties:
+                  name:
+                    description: Name of the provider package.
+                    type: string
+                  version:
+                    description: Version of the provider package as reported by its
+                      schema.
+                    type: string
+                type: object
+              plugin:
+                description: Plugin reports plugin availability.
+                properties:
+                  cachePath:
+                    description: |-
+                      CachePath is the shared plugin cache mount inside runner pods, when
+                      the cache is enabled.
+                    type: string
+                  ready:
+                    description: |-
+                      Ready is true when runner Jobs can execute operations for this
+                      provider without manual plugin installation.
+                    type: boolean
+                type: object
             type: object
         type: object
     served: true
@@ -332,6 +1202,9 @@ spec:
     - jsonPath: .status.conditions[?(@.type=='Synced')].status
       name: SYNCED
       type: string
+    - jsonPath: .status.conditions[?(@.type=='Synced')].reason
+      name: REASON
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: AGE
       type: date
@@ -363,6 +1236,32 @@ spec:
           spec:
             description: DoResourceSpec defines the desired state of DoResource.
             properties:
+              connectionDetails:
+                description: |-
+                  ConnectionDetails selects what lands in the connection Secret. Each
+                  entry provides exactly one of fromFieldPath (read from this
+                  resource's status) or value (static).
+                items:
+                  description: ConnectionDetail selects one key of the connection
+                    Secret.
+                  properties:
+                    fromFieldPath:
+                      description: |-
+                        FromFieldPath reads the value from this resource: "status.id" or a
+                        path below "status.outputs.". A not-yet-populated path skips the key
+                        and surfaces a Warning event (never the value itself).
+                      type: string
+                    name:
+                      description: Name is the Secret data key.
+                      minLength: 1
+                      type: string
+                    value:
+                      description: Value is a static value for the key.
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
               deletionPolicy:
                 default: Delete
                 description: |-
@@ -385,6 +1284,38 @@ spec:
                   against the provider's JSON schema from the Pulumi registry before any
                   operation is attempted.
                 x-kubernetes-preserve-unknown-fields: true
+              protect:
+                description: |-
+                  Protect guards against accidental replacement: when a spec change
+                  cannot be applied in place, the resource stops with a terminal
+                  ReplacementRequired condition until the change is approved via the
+                  do.pulumi.com/approve-replacement annotation (set to the current
+                  generation). Only an explicit protect=false replaces automatically —
+                  unset behaves protected.
+                type: boolean
+              providerRef:
+                description: |-
+                  ProviderRef resolves package and credentials from a cluster-scoped
+                  DoProvider profile, so platform teams pin provider versions in one
+                  place. When both providerRef and package are set they must agree,
+                  otherwise the resource is rejected.
+                properties:
+                  kind:
+                    default: DoProvider
+                    description: |-
+                      Kind of the profile: DoProvider (cluster-scoped) or DoProviderConfig
+                      (same namespace as this resource).
+                    enum:
+                    - DoProvider
+                    - DoProviderConfig
+                    type: string
+                  name:
+                    description: Name of the profile object.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
               references:
                 description: |-
                   References wire values from other DoResources in the same namespace
@@ -443,6 +1374,61 @@ spec:
                 x-kubernetes-validations:
                 - message: spec.type is immutable
                   rule: self == oldSelf
+              valuesFrom:
+                description: |-
+                  ValuesFrom injects Secret values into properties without the value
+                  ever being stored in this object, its status, events or logs: runner
+                  pods receive the value as a kubelet-resolved environment variable
+                  (the Secret must exist in the namespace the runner Job executes in)
+                  and substitute it into the property just before the provider call;
+                  streamed runner output and recorded state are redacted. Not
+                  supported for component resources (their engine checkpoint would
+                  persist the value).
+                items:
+                  description: ValueFrom injects one Secret value into a property
+                    path.
+                  properties:
+                    secretKeyRef:
+                      description: SecretKeyRef selects the Secret key holding the
+                        value.
+                      properties:
+                        key:
+                          description: Key within the Secret.
+                          minLength: 1
+                          type: string
+                        name:
+                          description: Name of the Secret.
+                          minLength: 1
+                          type: string
+                      required:
+                      - key
+                      - name
+                      type: object
+                    toPath:
+                      description: |-
+                        ToPath is a dot-separated path within spec.properties to set (same
+                        syntax as references[].toPath).
+                      minLength: 1
+                      type: string
+                  required:
+                  - secretKeyRef
+                  - toPath
+                  type: object
+                type: array
+              writeConnectionSecretToRef:
+                description: |-
+                  WriteConnectionSecretToRef names a Secret in this resource's
+                  namespace where the selected connectionDetails are published after
+                  every successful sync. The Secret is owned by this resource and
+                  garbage-collected with it.
+                properties:
+                  name:
+                    description: Name of the Secret.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
             required:
             - type
             type: object
@@ -515,6 +1501,13 @@ spec:
                   - type
                   type: object
                 type: array
+              engineState:
+                description: |-
+                  EngineState holds the exported Pulumi engine checkpoint for component
+                  resources (which are orchestrated by an ephemeral engine instead of
+                  stateless CRUD). Persisted in etcd with the rest of this object and
+                  re-imported on update/delete.
+                x-kubernetes-preserve-unknown-fields: true
               id:
                 description: ID is the provider-assigned identifier of the external
                   resource.
@@ -536,6 +1529,94 @@ spec:
     storage: true
     subresources:
       status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: dousages.do.pulumi.com
+spec:
+  group: do.pulumi.com
+  names:
+    kind: DoUsage
+    listKind: DoUsageList
+    plural: dousages
+    shortNames:
+    - douse
+    singular: dousage
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.of.name
+      name: OF
+      type: string
+    - jsonPath: .spec.reason
+      name: REASON
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: AGE
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          DoUsage blocks deletion of a DoResource that is in use even when no
+          spec.references edge exists — the platform-team equivalent of
+          Crossplane's Usage. While any DoUsage targets a resource, its external
+          teardown is refused (Ready=False / BlockedByDependents); deleting the
+          usage unblocks it.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              DoUsageSpec declares that a DoResource is in use by something outside
+              the reference graph.
+            properties:
+              of:
+                description: |-
+                  Of names the DoResource (same namespace) whose deletion is blocked
+                  while this usage exists.
+                properties:
+                  name:
+                    description: Name of the DoResource in this namespace.
+                    minLength: 1
+                    type: string
+                    x-kubernetes-validations:
+                    - message: spec.of.name is immutable
+                      rule: self == oldSelf
+                required:
+                - name
+                type: object
+              reason:
+                description: |-
+                  Reason documents who or what depends on the resource, e.g.
+                  "database is used by the payments namespace". Surfaced in the
+                  blocked resource's conditions.
+                type: string
+            required:
+            - of
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources: {}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -673,6 +1754,13 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - persistentvolumeclaims
+  - pods/log
+  verbs:
+  - get
+- apiGroups:
+  - ""
+  resources:
   - pods
   verbs:
   - get
@@ -681,9 +1769,26 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - pods/log
+  - secrets
   verbs:
+  - create
   - get
+  - update
+- apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions
+  verbs:
+  - create
+  - delete
+  - get
+  - update
+- apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions/status
+  verbs:
+  - update
 - apiGroups:
   - batch
   resources:
@@ -697,16 +1802,38 @@ rules:
 - apiGroups:
   - do.pulumi.com
   resources:
-  - docompositedefinitions
+  - docompositedefinitionrevisions
   verbs:
+  - create
+  - delete
   - get
   - list
   - watch
 - apiGroups:
   - do.pulumi.com
   resources:
+  - docompositedefinitions
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - do.pulumi.com
+  resources:
+  - docompositedefinitions/finalizers
+  - docomposites/finalizers
+  - doresources/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - do.pulumi.com
+  resources:
   - docompositedefinitions/status
   - docomposites/status
+  - doproviderconfigs/status
+  - doproviders/status
   - doresources/status
   verbs:
   - get
@@ -728,9 +1855,30 @@ rules:
 - apiGroups:
   - do.pulumi.com
   resources:
-  - docomposites/finalizers
-  - doresources/finalizers
+  - doproviderconfigs
+  - doproviders
+  - dousages
   verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - typed.do.pulumi.com
+  resources:
+  - '*'
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - typed.do.pulumi.com
+  resources:
+  - '*/status'
+  verbs:
+  - get
+  - patch
   - update
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -881,10 +2029,10 @@ spec:
         resources:
           limits:
             cpu: 500m
-            memory: 256Mi
+            memory: 1Gi
           requests:
             cpu: 10m
-            memory: 64Mi
+            memory: 128Mi
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:

@@ -31,7 +31,9 @@ reconcilers. Controllers depend on pulumido **only** through the
 | `controller/references.go` | Graph engine: reference resolution + output-schema path validation, readiness gating, blocking teardown (dependents + DoUsage), cycle detection |
 | `controller/composite_render.go` | Expression compiler: `${params.*}`, `${self.*}`, `${resources.*}` → child DoResources; sibling refs compile into `spec.references`; `$${` escapes; unterminated `${` is a render error |
 | `controller/docomposite_controller.go` | Composite expansion, owner-checked pruning, child replacement on immutable type change, status roll-up; renders from revisions (`composite_revision.go`) |
-| `controller/typed_crd.go` / `typed_controllers.go` | Generated typed CRDs (`typed.do.pulumi.com`) + dynamic translation controllers (`TypedRegistrar`) |
+| `controller/typed_crd.go` / `typed_controllers.go` | Generated typed CRDs (fixed `typed.do.pulumi.com` group for provider mirrors; allowlisted platform groups for composite APIs) + dynamic translation controllers; CRD ownership persisted via managed-by label + `do.pulumi.com/owner` annotation; `spec.doplane` block mapping; storedVersions hygiene (`TypedRegistrar`) |
+| `controller/docompositedefinition_controller.go` | Serves `spec.api` platform APIs: group allowlist, `APIServed` conditions, `${params.*}` cross-check, per-version object counts, deletion-blocking finalizer that removes the generated CRD at zero objects |
+| `controller/composite_params.go` | Render-time validation of DoComposite parameters against `api.parametersSchema` (same contract the generated CRD enforces at admission) |
 <!-- AGENTS-GENERATED:END filemap -->
 
 <!-- AGENTS-GENERATED:START golden-samples -->

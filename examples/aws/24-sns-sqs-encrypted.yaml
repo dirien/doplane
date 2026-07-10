@@ -1,0 +1,82 @@
+# AWS 24 — KMS-encrypted SNS → SQS
+#
+# The messaging pattern of example 06, hardened with a customer-managed KMS
+# key: both the SNS topic and the SQS queue encrypt at rest with the same key
+# (referenced by key id), and the queue subscribes to the topic. Demonstrates
+# one KMS key fanning into two encrypted resources.
+#
+# Note: end-to-end delivery through KMS also needs the key policy to grant the
+# SNS/SQS services; that runtime grant is out of scope here — every resource
+# still creates and deletes cleanly.
+#
+#   suffix ─> key ─┬─> topic ─┐
+#                  └─> queue ─┴─> subscription
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-encrypted-messaging
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: key
+      type: aws:kms/key:Key
+      package: aws@7.34.0
+      properties:
+        description: Messaging key for ${self.name} (${params.env})
+        deletionWindowInDays: 7
+        enableKeyRotation: true
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: topic
+      type: aws:sns/topic:Topic
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-secure-${resources.suffix.id}
+        kmsMasterKeyId: ${resources.key.outputs.keyId}
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: queue
+      type: aws:sqs/queue:Queue
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-secure-${resources.suffix.id}
+        kmsMasterKeyId: ${resources.key.outputs.keyId}
+        kmsDataKeyReusePeriodSeconds: 300
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: subscription
+      type: aws:sns/topicSubscription:TopicSubscription
+      package: aws@7.34.0
+      properties:
+        topic: ${resources.topic.outputs.arn}
+        protocol: sqs
+        endpoint: ${resources.queue.outputs.arn}
+        rawMessageDelivery: true
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: secure-msg-dev
+spec:
+  definition: aws-encrypted-messaging
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: secure-msg-prod
+spec:
+  definition: aws-encrypted-messaging
+  parameters:
+    env: prod

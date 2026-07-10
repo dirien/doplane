@@ -1,0 +1,68 @@
+# AWS 22 — AWS AppConfig application
+#
+# Feature-flag / dynamic-config plumbing: an AppConfig application, an
+# environment, and a freeform (hosted) configuration profile. Environment and
+# profile both reference the application id. All free.
+#
+#   suffix ─> app ─┬─> environment
+#                  └─> profile
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-appconfig
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: app
+      type: aws:appconfig/application:Application
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-${resources.suffix.id}
+        description: Feature config for ${self.name}
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: environment
+      type: aws:appconfig/environment:Environment
+      package: aws@7.34.0
+      properties:
+        applicationId: ${resources.app.id}
+        name: ${params.env}
+        description: ${params.env} environment
+        tags:
+          managed-by: doplane
+    - name: profile
+      type: aws:appconfig/configurationProfile:ConfigurationProfile
+      package: aws@7.34.0
+      properties:
+        applicationId: ${resources.app.id}
+        name: ${self.name}-flags
+        locationUri: hosted
+        type: AWS.Freeform
+        tags:
+          managed-by: doplane
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: flags-dev
+spec:
+  definition: aws-appconfig
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: flags-prod
+spec:
+  definition: aws-appconfig
+  parameters:
+    env: prod

@@ -1,6 +1,7 @@
 # Level 10 — the full provider-UX stack: a DoProvider profile plus a
-# cataloged composite that hides tokens, versions and wiring from app teams.
-# No cloud credentials needed.
+# cataloged composite published as its own typed platform API. Tokens,
+# versions and wiring stay hidden from app teams; what they see is a real,
+# schema-validated Kubernetes kind. No cloud credentials needed.
 #
 # Platform team: provider profile (once per cluster) ...
 apiVersion: do.pulumi.com/v1alpha1
@@ -10,15 +11,29 @@ metadata:
 spec:
   package: random@4.21.0
 ---
-# ... and the approved workflow. Children pin their provider through
-# providerRef; app teams never see a type token or package version.
+# ... and the approved workflow, served as `kind: PetIdentity`. The
+# parameters schema is the single contract: it validates typed objects at
+# admission, DoComposite parameters at render time, and the templates'
+# ${params.*} usage when this definition is applied. doplane's lifecycle
+# knobs (updatePolicy, revisionRef) live under the reserved spec.doplane
+# block of the typed kind. Check serving state with:
+#   kubectl get docd pet-identity   (SERVED / REASON columns)
 apiVersion: do.pulumi.com/v1alpha1
 kind: DoCompositeDefinition
 metadata:
   name: pet-identity
 spec:
-  requiredParameters:
-    - team
+  api:
+    kind: PetIdentity
+    # group: platform.example.com   # needs the compositeApiGroups allowlist
+    parametersSchema:
+      type: object
+      required:
+        - team
+      properties:
+        team:
+          type: string
+          minLength: 1
   resources:
     - name: pet
       type: random:index/randomPet:RandomPet
@@ -38,12 +53,12 @@ spec:
         keepers:
           pet: ${resources.pet.id}
 ---
-# App team: one object with safe parameters only.
-apiVersion: do.pulumi.com/v1alpha1
-kind: DoComposite
+# App team: one typed object with safe, admission-validated parameters.
+# (Wait for the API to be served first:
+#   kubectl wait --for=condition=Established crd/petidentities.typed.do.pulumi.com --timeout=1m)
+apiVersion: typed.do.pulumi.com/v1alpha1
+kind: PetIdentity
 metadata:
   name: payments-identity
 spec:
-  definition: pet-identity
-  parameters:
-    team: payments
+  team: payments

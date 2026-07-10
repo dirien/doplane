@@ -1,0 +1,83 @@
+# AWS 13 — Route 53 private hosted zone
+#
+# A VPC and a private hosted zone associated with it, plus an A record and a
+# CNAME record. The zone associates the VPC by id; the records reference the
+# zone id. forceDestroy lets the zone delete even with records present.
+#
+#   suffix ─> vpc ─> zone ─┬─> record-a
+#                          └─> record-cname
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-private-dns
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: vpc
+      type: aws:ec2/vpc:Vpc
+      package: aws@7.34.0
+      properties:
+        cidrBlock: 10.20.0.0/16
+        enableDnsSupport: true
+        enableDnsHostnames: true
+        tags:
+          Name: ${self.name}-${resources.suffix.id}
+          managed-by: doplane
+          env: ${params.env}
+    - name: zone
+      type: aws:route53/zone:Zone
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-${resources.suffix.id}.internal
+        comment: Private zone for ${self.name}
+        forceDestroy: true
+        vpcs:
+          - vpcId: ${resources.vpc.id}
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: recorda
+      type: aws:route53/record:Record
+      package: aws@7.34.0
+      properties:
+        zoneId: ${resources.zone.outputs.zoneId}
+        name: app.${self.name}-${resources.suffix.id}.internal
+        type: A
+        ttl: 300
+        records:
+          - 10.20.1.10
+    - name: recordcname
+      type: aws:route53/record:Record
+      package: aws@7.34.0
+      properties:
+        zoneId: ${resources.zone.outputs.zoneId}
+        name: www.${self.name}-${resources.suffix.id}.internal
+        type: CNAME
+        ttl: 300
+        records:
+          - app.${self.name}-${resources.suffix.id}.internal
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: dns-dev
+spec:
+  definition: aws-private-dns
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: dns-prod
+spec:
+  definition: aws-private-dns
+  parameters:
+    env: prod

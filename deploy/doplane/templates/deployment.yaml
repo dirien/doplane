@@ -59,6 +59,10 @@ spec:
             - name: WATCH_NAMESPACES
               value: {{ join "," . | quote }}
             {{- end }}
+            {{- with .Values.compositeApiGroups }}
+            - name: COMPOSITE_API_GROUPS
+              value: {{ join "," . | quote }}
+            {{- end }}
             {{- if .Values.pluginCache.enabled }}
             - name: PLUGIN_CACHE_PVC
               value: {{ include "doplane.pluginCacheClaimName" . | quote }}

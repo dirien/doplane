@@ -17,7 +17,7 @@ the registry token and a kubeconfig for the runner:
 | 7 | `07-digitalocean-web-node.yaml` | DigitalOcean composite: VPC, tag, Droplet, firewall, project assignment |
 | 8 | `08-private-registry-component.yaml` | COMPONENT from the Pulumi Cloud private registry (`private/ediri/web-app`), orchestrated by an ephemeral engine; checkpoint persisted in `status.engineState` |
 | 9 | `09-provider-profile.yaml` | `DoProvider` profile: platform-pinned package, allow-list enforcement, `providerRef` on raw resources — no cloud account needed |
-| 10 | `10-cataloged-composite.yaml` | the full provider UX: profile + cataloged composite hiding tokens, versions and wiring from app teams — no cloud account needed |
+| 10 | `10-cataloged-composite.yaml` | the full provider UX: profile + cataloged composite served as its own typed platform API (`kind: PetIdentity`, schema-validated at admission) — no cloud account needed |
 | 11 | `11-secrets-in-and-out.yaml` | `valuesFrom` secret inputs (value kept out of manifests, events and logs; never in identity-forming properties) + `writeConnectionSecretToRef` connection secret — no cloud account needed |
 | 12 | `12-typed-private-registry-component-provider.yaml` + `13-typed-private-registry-component.yaml` | component package schema exposed as a generated typed CRD; typed object drives the component engine |
 
@@ -78,9 +78,13 @@ kubectl get doproviders                      # random READY True
 kubectl get dores pet-via-provider -w        # created with the profile's package
 kubectl get dores integer-not-allowed        # SYNCED False / ResourceNotAllowed
 
-# Cataloged composite: app teams see parameters only.
+# Cataloged composite as a typed platform API: app teams apply the
+# generated PetIdentity kind with schema-validated parameters only.
+# (Apply twice if the PetIdentity CRD is not served yet on the first pass.)
 kubectl apply -f examples/10-cataloged-composite.yaml
-kubectl get docomposite payments-identity -w # 2/2 READY
+kubectl get docd pet-identity                # SERVED True
+kubectl get petidentities payments-identity -w
+kubectl get docomposite payments-identity    # the owned mirror (machinery)
 
 # Typed component API: platform registers the component package, then app
 # teams apply the generated WebAppComponent kind.

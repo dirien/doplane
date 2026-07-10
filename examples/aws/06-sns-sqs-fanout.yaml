@@ -1,0 +1,76 @@
+# AWS 06 — SNS → SQS fan-out
+#
+# The canonical pub/sub building block: an SNS topic, an SQS queue, a
+# subscription wiring the topic to the queue with raw message delivery, and a
+# queue policy that lets the SNS service deliver into the queue.
+#
+# Note: a value may interpolate only one sibling ${resources.*} source, so the
+# queue policy references the queue ARN alone. A production policy would also
+# pin an aws:SourceArn condition to the topic ARN (a second source) — express
+# that by writing the topic ARN into the queue's own policy input instead.
+#
+#   topic ──> subscription <─ queue ─> queuepolicy
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-sns-sqs-fanout
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: topic
+      type: aws:sns/topic:Topic
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-events-${resources.suffix.id}
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: queue
+      type: aws:sqs/queue:Queue
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-worker-${resources.suffix.id}
+        messageRetentionSeconds: 345600
+        visibilityTimeoutSeconds: 60
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: subscription
+      type: aws:sns/topicSubscription:TopicSubscription
+      package: aws@7.34.0
+      properties:
+        topic: ${resources.topic.outputs.arn}
+        protocol: sqs
+        endpoint: ${resources.queue.outputs.arn}
+        rawMessageDelivery: true
+    - name: queuepolicy
+      type: aws:sqs/queuePolicy:QueuePolicy
+      package: aws@7.34.0
+      properties:
+        queueUrl: ${resources.queue.outputs.url}
+        policy: '{"Version":"2012-10-17","Statement":[{"Sid":"AllowSNS","Effect":"Allow","Principal":{"Service":"sns.amazonaws.com"},"Action":"sqs:SendMessage","Resource":"${resources.queue.outputs.arn}"}]}'
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: notify-dev
+spec:
+  definition: aws-sns-sqs-fanout
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: notify-prod
+spec:
+  definition: aws-sns-sqs-fanout
+  parameters:
+    env: prod

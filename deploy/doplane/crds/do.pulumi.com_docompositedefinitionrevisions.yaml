@@ -63,34 +63,64 @@ spec:
                   api:
                     description: |-
                       API exposes this definition as its own typed, namespaced CRD (e.g.
-                      `kind: StaticSite`): users apply the platform kind with their
-                      parameters as spec, instead of a generic DoComposite. Each typed
-                      object is translated into an owned DoComposite.
+                      `kind: Website` in `platform.acme.com`): users apply the platform
+                      kind with their parameters as spec, instead of a generic DoComposite.
+                      Each typed object is translated into an owned DoComposite.
                     properties:
+                      deprecatedVersions:
+                        description: |-
+                          DeprecatedVersions are previously served versions kept served (and
+                          marked deprecated) while their objects migrate. Remove a version
+                          only when the definition's status reports zero objects for it.
+                        items:
+                          type: string
+                        type: array
+                        x-kubernetes-list-type: set
+                      group:
+                        description: |-
+                          Group of the generated API (e.g. platform.acme.com). Must be on the
+                          operator's install-time allowlist (Helm value compositeApiGroups),
+                          which also renders the matching manager RBAC. Empty uses the fixed
+                          typed.do.pulumi.com group.
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+$
+                        type: string
                       kind:
-                        description: Kind of the generated API (e.g. StaticSite).
+                        description: Kind of the generated API (e.g. Website).
                         pattern: ^[A-Z][A-Za-z0-9]*$
                         type: string
                       parametersSchema:
                         description: |-
-                          ParametersSchema is an OpenAPI v3 schema (JSONSchemaProps) validating
-                          the typed object's spec — the composite parameters. Empty accepts
-                          any object.
+                          ParametersSchema is the OpenAPI v3 schema validating the typed
+                          object's spec — the single source of the parameter contract. It also
+                          validates DoComposite parameters at render time and template
+                          ${params.*} usage at apply time. Empty accepts any object. The
+                          property name "doplane" is reserved for doplane's lifecycle knobs.
                         x-kubernetes-preserve-unknown-fields: true
                       plural:
                         description: Plural resource name; defaults to lowercase(kind)
                           + "s".
                         type: string
+                      version:
+                        description: |-
+                          Version served and referenced by the templates (storage version).
+                          Defaults to v1alpha1. Bumping it keeps prior versions only if they
+                          are listed in deprecatedVersions; generated CRDs use conversion
+                          strategy None, so every served version must stay round-trippable —
+                          a new required parameter is a new API, not a new version.
+                        pattern: ^v[0-9]+((alpha|beta)[0-9]+)?$
+                        type: string
                     required:
                     - kind
                     type: object
-                  requiredParameters:
-                    description: |-
-                      RequiredParameters lists parameter keys every DoComposite using this
-                      definition must provide.
-                    items:
-                      type: string
-                    type: array
+                    x-kubernetes-validations:
+                    - message: spec.api.kind is immutable
+                      rule: self.kind == oldSelf.kind
+                    - message: spec.api.plural is immutable
+                      rule: has(self.plural) == has(oldSelf.plural) && (!has(self.plural)
+                        || self.plural == oldSelf.plural)
+                    - message: spec.api.group is immutable
+                      rule: has(self.group) == has(oldSelf.group) && (!has(self.group)
+                        || self.group == oldSelf.group)
                   resources:
                     description: Resources are the templates rendered into DoResources.
                     items:
@@ -103,6 +133,12 @@ spec:
                           enum:
                           - Delete
                           - Orphan
+                          type: string
+                        externalName:
+                          description: |-
+                            ExternalName adopts an existing external resource instead of creating
+                            one: rendered (params/self expressions allowed; sibling resources.*
+                            are not) into the child's crossplane.io/external-name annotation.
                           type: string
                         name:
                           description: |-
@@ -152,6 +188,10 @@ spec:
                 required:
                 - resources
                 type: object
+                x-kubernetes-validations:
+                - message: spec.api cannot be removed once set; delete the definition
+                    instead
+                  rule: '!has(oldSelf.api) || has(self.api)'
               definitionName:
                 description: DefinitionName is the DoCompositeDefinition this revision
                   snapshots.

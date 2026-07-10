@@ -1,0 +1,79 @@
+# AWS 15 — S3 event notifications to SNS
+#
+# Event-driven storage: an S3 bucket that publishes ObjectCreated events to an
+# SNS topic. The topic policy grants the S3 service publish rights, and the
+# bucket notification is gated behind that policy — it references the topic
+# policy's ARN (which equals the topic ARN) as the notification target, so S3
+# validates the publish permission successfully.
+#
+#   suffix ─> topic ─> topicpolicy ─┐
+#            bucket ────────────────┴─> notification
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-bucket-events
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: topic
+      type: aws:sns/topic:Topic
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-uploads-${resources.suffix.id}
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: bucket
+      type: aws:s3/bucketV2:BucketV2
+      package: aws@7.34.0
+      properties:
+        bucket: ${self.name}-uploads-${resources.suffix.id}
+        forceDestroy: true
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: topicpolicy
+      type: aws:sns/topicPolicy:TopicPolicy
+      package: aws@7.34.0
+      properties:
+        arn: ${resources.topic.outputs.arn}
+        # One sibling source per value: this grants the S3 service publish
+        # rights to the topic. A production policy would also pin
+        # aws:SourceArn to the bucket ARN (a second source).
+        policy: '{"Version":"2012-10-17","Statement":[{"Sid":"AllowS3Publish","Effect":"Allow","Principal":{"Service":"s3.amazonaws.com"},"Action":"SNS:Publish","Resource":"${resources.topic.outputs.arn}"}]}'
+    - name: notification
+      type: aws:s3/bucketNotification:BucketNotification
+      package: aws@7.34.0
+      properties:
+        bucket: ${resources.bucket.outputs.bucket}
+        topics:
+          # topicpolicy.arn == the topic ARN, and referencing it here gates the
+          # notification behind the topic policy so the S3 publish test passes.
+          - topicArn: ${resources.topicpolicy.outputs.arn}
+            events:
+              - s3:ObjectCreated:*
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: uploads-dev
+spec:
+  definition: aws-bucket-events
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: uploads-prod
+spec:
+  definition: aws-bucket-events
+  parameters:
+    env: prod

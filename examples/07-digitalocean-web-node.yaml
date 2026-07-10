@@ -17,9 +17,6 @@ kind: DoCompositeDefinition
 metadata:
   name: digitalocean-web-node
 spec:
-  requiredParameters:
-    - env
-    - region
   resources:
     - name: suffix
       type: random:index/randomString:RandomString

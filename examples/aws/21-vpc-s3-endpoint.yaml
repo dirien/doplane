@@ -1,0 +1,71 @@
+# AWS 21 — VPC gateway endpoint for S3
+#
+# Keep S3 traffic on the AWS backbone: a VPC, a route table, and an S3 gateway
+# VPC endpoint wired into that route table. Gateway endpoints are free (unlike
+# interface endpoints). The endpoint references the VPC and route table ids.
+#
+# Region note: the S3 gateway service name embeds the region; this pins
+# us-east-2 to match the ESC credential environment (pulumi-idp/auth).
+#
+#   suffix ─> vpc ─┬─> rt ──────────┐
+#                  └─> endpoint (vpc + rt)
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-s3-endpoint
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: vpc
+      type: aws:ec2/vpc:Vpc
+      package: aws@7.34.0
+      properties:
+        cidrBlock: 10.50.0.0/16
+        enableDnsSupport: true
+        tags:
+          Name: ${self.name}-${resources.suffix.id}
+          env: ${params.env}
+    - name: rt
+      type: aws:ec2/routeTable:RouteTable
+      package: aws@7.34.0
+      properties:
+        vpcId: ${resources.vpc.id}
+        tags:
+          Name: ${self.name}-${resources.suffix.id}
+    - name: endpoint
+      type: aws:ec2/vpcEndpoint:VpcEndpoint
+      package: aws@7.34.0
+      properties:
+        vpcId: ${resources.vpc.id}
+        serviceName: com.amazonaws.us-east-2.s3
+        vpcEndpointType: Gateway
+        routeTableIds:
+          - ${resources.rt.id}
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: link-dev
+spec:
+  definition: aws-s3-endpoint
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: link-prod
+spec:
+  definition: aws-s3-endpoint
+  parameters:
+    env: prod

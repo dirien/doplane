@@ -18,6 +18,8 @@ description: Interpret Ready and Synced conditions and choose the next diagnosti
 
 Provider profiles also expose `SchemaFetched`, `PluginReady`, and `CredentialsReady`. A profile reaches `Ready=True` only when all required stages are usable.
 
+`DoCompositeDefinition` exposes `APIServed` when `spec.api` declares a typed platform API. `True/Served` means the generated CRD is being served. `False` reasons: `GroupNotAllowed` (group missing from the install-time `compositeApiGroups` allowlist), `InvalidSchema` (bad parameters schema, reserved `doplane` parameter, or templates referencing undeclared `${params.*}`), `CRDConflict` (the CRD is owned by another definition or operator), `StoredVersionInUse` (a version was dropped while objects still exist — restore it under `deprecatedVersions` until `status.apiVersions` reports zero objects), and `DeletionBlocked` (typed objects still exist while the definition is being deleted).
+
 ## Failure groups
 
 | Reason or group | Stage | First checks | Mutation ran? |

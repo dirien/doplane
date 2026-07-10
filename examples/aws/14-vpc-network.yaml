@@ -1,0 +1,90 @@
+# AWS 14 — VPC network foundation
+#
+# The classic public-subnet network: a VPC, an internet gateway, a public
+# subnet, a route table with a default route to the gateway, and the
+# association binding the subnet to the route table. All free (no NAT, no
+# EIP). Every resource references the VPC or its siblings by id, so the graph
+# engine builds and tears them down in dependency order.
+#
+#   suffix ─> vpc ─┬─> igw ─────────────┐
+#                  ├─> subnet ─┐        │
+#                  └─> rt ─────┼─> route (rt + igw)
+#                              └─> assoc (rt + subnet)
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-vpc-network
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: vpc
+      type: aws:ec2/vpc:Vpc
+      package: aws@7.34.0
+      properties:
+        cidrBlock: 10.30.0.0/16
+        enableDnsSupport: true
+        enableDnsHostnames: true
+        tags:
+          Name: ${self.name}-${resources.suffix.id}
+          env: ${params.env}
+    - name: igw
+      type: aws:ec2/internetGateway:InternetGateway
+      package: aws@7.34.0
+      properties:
+        vpcId: ${resources.vpc.id}
+        tags:
+          Name: ${self.name}-${resources.suffix.id}
+    - name: subnet
+      type: aws:ec2/subnet:Subnet
+      package: aws@7.34.0
+      properties:
+        vpcId: ${resources.vpc.id}
+        cidrBlock: 10.30.1.0/24
+        mapPublicIpOnLaunch: true
+        tags:
+          Name: ${self.name}-public-${resources.suffix.id}
+    - name: rt
+      type: aws:ec2/routeTable:RouteTable
+      package: aws@7.34.0
+      properties:
+        vpcId: ${resources.vpc.id}
+        tags:
+          Name: ${self.name}-public-${resources.suffix.id}
+    - name: route
+      type: aws:ec2/route:Route
+      package: aws@7.34.0
+      properties:
+        routeTableId: ${resources.rt.id}
+        destinationCidrBlock: 0.0.0.0/0
+        gatewayId: ${resources.igw.id}
+    - name: assoc
+      type: aws:ec2/routeTableAssociation:RouteTableAssociation
+      package: aws@7.34.0
+      properties:
+        routeTableId: ${resources.rt.id}
+        subnetId: ${resources.subnet.id}
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: net-dev
+spec:
+  definition: aws-vpc-network
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: net-prod
+spec:
+  definition: aws-vpc-network
+  parameters:
+    env: prod

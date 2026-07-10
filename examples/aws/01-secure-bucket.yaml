@@ -1,0 +1,86 @@
+# AWS 01 — Secure S3 bucket
+#
+# A platform-owned "secure bucket": one DoCompositeDefinition renders a
+# 5-resource DAG (random suffix → bucket → versioning + encryption +
+# public-access-block + TLS-only policy). Two DoComposite instances below
+# ("dev" and "prod") are two independent stacks off the same definition —
+# each gets its own uniquely-named bucket, proving the template instantiates
+# more than once without collision.
+#
+#   suffix ─> bucket ─┬─> versioning
+#                     ├─> encryption
+#                     ├─> pab
+#                     └─> policy   (needs bucket.arn)
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-secure-bucket
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: bucket
+      type: aws:s3/bucketV2:BucketV2
+      package: aws@7.34.0
+      properties:
+        bucket: ${self.name}-${resources.suffix.id}
+        forceDestroy: true
+        tags:
+          managed-by: doplane
+          composite: ${self.name}
+          env: ${params.env}
+    - name: versioning
+      type: aws:s3/bucketVersioningV2:BucketVersioningV2
+      package: aws@7.34.0
+      properties:
+        bucket: ${resources.bucket.outputs.bucket}
+        versioningConfiguration:
+          status: Enabled
+    - name: encryption
+      type: aws:s3/bucketServerSideEncryptionConfigurationV2:BucketServerSideEncryptionConfigurationV2
+      package: aws@7.34.0
+      properties:
+        bucket: ${resources.bucket.outputs.bucket}
+        rules:
+          - applyServerSideEncryptionByDefault:
+              sseAlgorithm: AES256
+            bucketKeyEnabled: true
+    - name: pab
+      type: aws:s3/bucketPublicAccessBlock:BucketPublicAccessBlock
+      package: aws@7.34.0
+      properties:
+        bucket: ${resources.bucket.outputs.bucket}
+        blockPublicAcls: true
+        blockPublicPolicy: true
+        ignorePublicAcls: true
+        restrictPublicBuckets: true
+    - name: policy
+      type: aws:s3/bucketPolicy:BucketPolicy
+      package: aws@7.34.0
+      properties:
+        bucket: ${resources.bucket.outputs.bucket}
+        policy: '{"Version":"2012-10-17","Statement":[{"Sid":"DenyInsecureTransport","Effect":"Deny","Principal":"*","Action":"s3:*","Resource":["${resources.bucket.outputs.arn}","${resources.bucket.outputs.arn}/*"],"Condition":{"Bool":{"aws:SecureTransport":"false"}}}]}'
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: bkt-dev
+spec:
+  definition: aws-secure-bucket
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: bkt-prod
+spec:
+  definition: aws-secure-bucket
+  parameters:
+    env: prod

@@ -5,6 +5,10 @@ contradictions they created, how those were resolved, and the risks still
 open. The current implementation (generic `DoResource`, Job-per-operation,
 no references) is the v1 baseline this builds on.
 
+> A second grilling (2026-07-10) redesigned the typed platform-API layer —
+> see [Typed platform APIs (v3 direction)](#design-typed-platform-apis-v3-direction)
+> below.
+
 ## Implementation status (2026-07-07)
 
 Build-order steps 1 and 4 are implemented and verified end-to-end on kind
@@ -178,3 +182,181 @@ against AWS (see `examples/`):
    progressive rollout.
 5. **gRPC runner service** when reconcile volume demands it; keep Jobs as
    the fallback/audit path.
+
+---
+
+# Design: typed platform APIs (v3 direction)
+
+Outcome of a second structured design grilling (2026-07-10), focused on how
+platform teams extend the Kubernetes API from composite definitions and how
+app/project teams consume the result. Seven decisions. The baseline is the
+current implementation: `DoCompositeDefinition.spec.api` → CRD in the fixed
+`typed.do.pulumi.com` group (`internal/controller/typed_crd.go`) + runtime
+translation controllers (`internal/controller/typed_controllers.go`).
+Heavily informed by Crossplane v2 precedent, verified against their
+docs/issues on 2026-07-10 (see [Precedent](#precedent-verified-2026-07-10)).
+
+## The target mental model
+
+- **Platform team**: one `DoCompositeDefinition` = resource templates + one
+  parameter schema + `api: {group, version, kind}`. Apply it and doplane
+  serves e.g. `websites.platform.acme.com/v1` — a real, versioned, branded
+  Kubernetes API. Status conditions say it is served, or exactly why not.
+- **App team**: applies the platform kind. Parameters live flat in `spec`,
+  validated at admission; doplane's lifecycle knobs live under the reserved
+  `spec.doplane` block. That object is the *only* thing app teams are taught.
+- **Everything else** — `DoComposite`, revisions, child `DoResources` — is
+  machinery: visible for debugging, absent from the user-facing story.
+
+## Why: six fault lines in the current implementation
+
+1. **The typed path is strictly weaker than the raw one.**
+   `TypedCompositeReconciler` maps `spec` → `parameters` and nothing else,
+   so typed users cannot set `updatePolicy` or pin a revision — the "nice"
+   API the platform publishes is the less capable one.
+2. **Three sources of truth for the parameter contract**:
+   `requiredParameters` (flat list), `api.parametersSchema` (hand-written
+   JSONSchemaProps blob, `PreserveUnknownFields`, unvalidated at authoring),
+   and the `${params.*}` the templates actually reference. Nothing
+   cross-checks any pair of them.
+3. **No feedback surface.** `DoCompositeDefinitionStatus` carries only a
+   composite count — no conditions. A malformed `parametersSchema` produces
+   a Warning event and is terminal until the spec changes; `kubectl get docd`
+   says nothing about whether the API is being served.
+4. **Templates are revisioned; the API schema is not.** `applyCRD` updates
+   the CRD in place, so a Manual-pinned instance renders old templates
+   behind the current front-door schema.
+5. **Kind-collision ownership is in-memory** (`TypedRegistrar.claim`).
+   After a manager restart the owners map is empty; two definitions fighting
+   over one plural re-race and the winner is nondeterministic.
+6. **One fixed group, one frozen version** for every platform API in the
+   cluster: no platform branding (`platform.acme.com`), no version
+   evolution; the risk register's "CRD regeneration safety" was still open.
+
+## The seven decisions
+
+1. **Typed kinds are the product.** `DoComposite` is demoted to internal
+   machinery, like `DoCompositeDefinitionRevision`: it remains a real object
+   (debugging, escape hatch) but docs and examples teach the typed kind.
+2. **One structured schema field** on the definition — typed
+   `JSONSchemaProps`, not a raw JSON blob — validated when the definition is
+   applied. `requiredParameters` is deleted. Render-time validation of the
+   parameters and cross-checks of template `${params.*}` usage run against
+   the same schema.
+3. **Platform-chosen group + version** (`api.group`, `api.version`), gated
+   by an **install-time group allowlist** (Helm value → enumerable RBAC
+   rules). A definition naming an unlisted group gets a terminal
+   `GroupNotAllowed` condition. A wildcard CR grant was rejected: the fixed
+   group existed to keep manager RBAC enumerable, and that property is kept.
+4. **Reserved `spec.doplane` block** on typed objects for doplane's knobs
+   (`updatePolicy`, `revisionRef`), injected into every generated schema —
+   the Crossplane v2 `spec.crossplane` move. Platform params live flat at
+   the top level of `spec`; a definition declaring a param named `doplane`
+   is rejected at apply time.
+5. **Versioning follows the Crossplane model**: a definition may serve
+   multiple versions, generated CRDs always use conversion strategy `None`,
+   all served versions must be round-trippable (new *required* field = new
+   API), exactly one version is referenced by the templates. On a version
+   bump the old version stays served-and-deprecated, the definition's status
+   reports stored-object counts per version, humans migrate manifests, and
+   the old version is dropped only at zero. Webhook conversion was rejected:
+   TLS/cert plumbing as an install dependency and webhook availability
+   becoming API availability.
+6. **Renames are forbidden.** `api.group` and `api` names are immutable
+   once served (CEL), consistent with `spec.type` immutability on
+   DoResource and with Crossplane (breaking change = new XRD). A rename is a
+   new definition; migration happens at the leaf (decision 7's checklist).
+   A composite-level "mirror adoption" handshake (transfer the typed CR →
+   DoComposite owner reference) was considered and deferred — doplane's
+   mirror layer makes it possible where Crossplane can't, but it is
+   ownership-transfer code guarding live infrastructure; build it only on
+   real demand.
+7. **CRD ownership is persisted on the CRD itself** (managed-by label +
+   owner annotation, checked before any apply) instead of the in-memory
+   claim map. Fixes the restart re-race and prevents hijacking a CRD some
+   other operator owns — mandatory once groups are platform-chosen.
+
+Default set without objection: provider-resource typed CRDs
+(`DoProvider.typedResources`) stay in the fixed `typed.do.pulumi.com` group —
+they are doplane-shaped mirrors of Pulumi tokens, not platform brands. Only
+composite APIs get platform groups.
+
+## Contradictions surfaced and their resolutions
+
+- **Platform-owned spec vs doplane knobs**: the platform schema owns `spec`,
+  but typed parity needs `updatePolicy`/`revisionRef` somewhere → reserved
+  `spec.doplane` block; annotations rejected (invisible to schema and
+  `kubectl explain`), `spec.parameters` nesting rejected (reads as a doplane
+  form, not a native API).
+- **"Real versioning" vs conversion webhooks**: Kubernetes offers only
+  `None` or `Webhook` → Crossplane's `None`/round-trippable ceiling adopted
+  deliberately.
+- **Platform groups vs enumerable manager RBAC** → install-time allowlist;
+  adding a group is a values change + upgrade, which doubles as a deliberate
+  platform decision.
+- **Rename support vs live-infrastructure safety** → immutability; the
+  adoption escape hatch lives at the DoResource leaf, not the composite.
+
+## Implementation checklist (forced by the decisions)
+
+Implemented 2026-07-10, in the same grilling's follow-up session:
+
+- [x] `api` gains `group`/`version`; CEL immutability on group/names (plus
+      "api cannot be removed once set"); allowlist check
+      (`--composite-api-groups`) with terminal `GroupNotAllowed` condition;
+      the `compositeApiGroups` Helm value renders both the flag and the
+      per-group RBAC rules
+- [x] structured parameters-schema field replaces the raw blob **and**
+      `requiredParameters` (`api.parametersSchema` is a typed
+      `JSONSchemaProps`, schemaless at the CRD layer); the apiserver's CRD
+      validation is the authority at apply time (rejections surface as
+      `InvalidSchema`); `${params.*}` usage cross-checked against declared
+      properties; render-time validation of DoComposite parameters runs the
+      same schema (`composite_params.go`)
+- [x] `spec.doplane` injected into generated schemas;
+      `TypedCompositeReconciler` maps it to `updatePolicy`/`revisionRef`;
+      param named `doplane` rejected
+- [x] status conditions on `DoCompositeDefinition` (`APIServed` with
+      reasons `Served`/`InvalidSchema`/`GroupNotAllowed`/`CRDConflict`/
+      `StoredVersionInUse`/`DeletionBlocked`) plus per-version object
+      counts (`status.apiVersions`, attributed via managedFields)
+- [x] CRD ownership label + `do.pulumi.com/owner` annotation with a
+      pre-apply check; the in-memory `claim` map is gone (label-only CRDs
+      from pre-annotation releases are adopted); superseded translation
+      controllers fence themselves off via the registrar
+- [x] definition finalizer (`do.pulumi.com/typed-api`) blocking deletion
+      while typed CRs exist; at zero objects the generated CRD is deleted
+      and the informer removed
+- [x] external-name pass-through: `CompositeResourceTemplate.externalName`
+      renders (params/self only) into the child's
+      `crossplane.io/external-name` annotation
+- [x] version-bump flow: `api.deprecatedVersions` keeps old versions
+      served-and-deprecated; dropping a version with objects still stored
+      is refused (`StoredVersionInUse`); at zero objects
+      `status.storedVersions` is pruned automatically before the spec
+      update (safe because conversion is `None` and schemas are
+      round-trippable)
+
+## Risk register (grilled and accepted)
+
+- **Schema/template skew**: templates are revisioned, the API schema is not;
+  a Manual-pinned instance renders old templates behind the current schema.
+  Bounded by the round-trippability rule — accepted.
+- **Migration ergonomics**: leaf-level orphan + external-name re-adoption is
+  manual and per-resource, matching Crossplane's long-lived pain. Revisit
+  mirror adoption (decision 6) only if real platform teams hit the wall.
+- **Breaking existing `typed.do.pulumi.com` composite APIs**: acceptable at
+  v1alpha1.
+
+## Precedent (verified 2026-07-10)
+
+Crossplane v2: an XRD's name must be `<plural>.<group>` and breaking changes
+ship as a brand-new XRD (no rename); generated CRDs always use conversion
+`None` — webhook conversion has never shipped
+([crossplane#2608](https://github.com/crossplane/crossplane/issues/2608),
+[crossplane#6964](https://github.com/crossplane/crossplane/issues/6964));
+multiple served versions with exactly one `referenceable`, round-trippable
+schemas required; `spec.crossplane` is the reserved-block precedent; v2
+removed claims, so no XR-level binding/adoption layer exists. See the
+[XRD docs](https://docs.crossplane.io/latest/composition/composite-resource-definitions/)
+and [Upbound's XR API-evolution guidance](https://blog.upbound.io/crossplane-xr-best-practices).
