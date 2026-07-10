@@ -33,6 +33,7 @@ import (
 
 	dov1alpha1 "github.com/dirien/doplane/api/v1alpha1"
 	"github.com/dirien/doplane/internal/pulumido"
+	"github.com/dirien/doplane/internal/runnerops"
 )
 
 // fakeRunner implements pulumido.Runner in memory.
@@ -237,6 +238,31 @@ var _ = Describe("DoResource Controller", func() {
 			Expect(runner.deleted).To(ContainElement("fake-id-1"))
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(errors.IsNotFound(err)).To(BeTrue())
+		})
+
+		It("should report UpdateNotSupported when the provider cannot patch in place", func() {
+			reconcileN(2)
+
+			resource := &dov1alpha1.DoResource{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			resource.Spec.Properties = &apiextensionsv1.JSON{Raw: []byte(`{"length": 4, "prefix": "doplane"}`)}
+			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+			// The exact error shape the JobRunner produces: the read-not-supported
+			// sentinel wrapping the runner's typed code, which must not override
+			// the update-specific condition reason.
+			runner.patchErr = fmt.Errorf("%w: %w", pulumido.ErrReadNotSupported,
+				&pulumido.CodedError{Code: runnerops.CodeReadNotSupported, Message: "resource does not support import"})
+
+			reconcileN(1)
+
+			updated := &dov1alpha1.DoResource{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, updated)).To(Succeed())
+			cond := meta.FindStatusCondition(updated.Status.Conditions, dov1alpha1.ConditionSynced)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal("UpdateNotSupported"))
+			Expect(meta.IsStatusConditionTrue(updated.Status.Conditions, dov1alpha1.ConditionReady)).To(BeTrue(),
+				"the external resource still exists")
 		})
 
 		It("should reject properties that violate the provider schema", func() {
