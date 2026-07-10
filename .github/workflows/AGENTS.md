@@ -4,20 +4,24 @@
 
 <!-- AGENTS-GENERATED:START overview -->
 ## Overview
-Three workflows, all triggered on push + pull_request:
+Four workflows. Code gates run on push + pull request; documentation also
+supports manual deployment:
 | Workflow | Runs | Notes |
 |----------|------|-------|
 | `lint.yml` | golangci-lint (strict `.golangci.yml`) | zero-tolerance gate |
 | `test.yml` | `make test` (unit + envtest) | envtest binaries downloaded by the Makefile |
 | `test-e2e.yml` | `make test-e2e` | installs latest kind, creates a throwaway cluster |
+| `docs.yml` | `npm ci && npm run docs:build` in `website/` | deploys GitHub Pages from `main`; PRs build without deploying |
 <!-- AGENTS-GENERATED:END overview -->
 
 ## Setup & environment
 - Runners: `ubuntu-latest`; Go from `go.mod` via `go-version-file`
 - E2E installs the latest kind release and creates a throwaway cluster
+- Documentation uses Node 24 and the lockfile in `website/`
 
 ## Build & tests
 - Same make targets as local dev: `make lint`, `make test`, `make test-e2e`
+- Reproduce documentation builds with `cd website && npm ci && npm run docs:build`
 - Reproduce CI failures locally with those targets before pushing
 
 ## Code style & conventions

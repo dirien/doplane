@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="doplane logo">
+  <defs>
+    <linearGradient id="a" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9b8fff"/>
+      <stop offset="1" stop-color="#3dd6b4"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#a)" d="M32 4 56 18v28L32 60 8 46V18L32 4Z"/>
+  <path fill="#fff" fill-rule="evenodd" d="M21 19h12.5C41.5 19 47 24 47 32s-5.5 13-13.5 13H21V19Zm8 7v12h4.2c3.8 0 5.8-2.2 5.8-6s-2-6-5.8-6H29Z" clip-rule="evenodd"/>
+</svg>

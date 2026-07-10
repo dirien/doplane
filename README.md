@@ -6,6 +6,10 @@ stacks, or state files. The desired state lives in a `DoResource` custom
 resource, the observed cloud state is written back into its `status` and
 therefore persisted in etcd.
 
+**[Read the documentation](https://dirien.github.io/doplane/)** — start on a
+local kind cluster, choose an API, or load the agent-oriented Markdown
+guides through [`llms.txt`](https://dirien.github.io/doplane/llms.txt).
+
 ```yaml
 apiVersion: do.pulumi.com/v1alpha1
 kind: DoResource

@@ -28,3 +28,8 @@ go.work
 
 # Claude Code local session artifacts
 .claude/
+
+# Documentation site
+website/node_modules/
+website/.vitepress/cache/
+website/.vitepress/dist/
