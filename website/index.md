@@ -4,7 +4,7 @@ layout: home
 hero:
   name: "Cloud resources."
   text: "Kubernetes-native."
-  tagline: Pulumi under the hood, Kubernetes objects on the surface. The whole Pulumi ecosystem as declarative APIs on any cluster — no separate state service to operate.
+  tagline: Kubernetes objects in, cloud resources out. Pulumi runs under the hood, so anything in the Pulumi Registry is one kubectl apply away. State lives with your objects in etcd.
   image:
     src: /logo.svg
     alt: doplane
@@ -22,7 +22,7 @@ features:
     details: Apply a DoResource. doplane validates it, calls the provider, and records observed state in the object's status.
   - icon: "⌁"
     title: The whole Pulumi ecosystem
-    details: Use any Pulumi provider, and component resources authored in TypeScript, Go, Python, C# or Java — pinned, allow-listed, and served as Kubernetes-native APIs.
+    details: Any provider in the Pulumi Registry works. Pin the package, allow-list resource types, hand teams a Kubernetes API. Components written in TypeScript, Go, Python, C# or Java come along too.
   - icon: "◇"
     title: Composable platform APIs
     details: Turn dependency graphs into reusable composites or generated typed CRDs for application teams.
@@ -40,6 +40,15 @@ features:
 <div class="agent-contract">
   <p><strong>Built for two readers:</strong> this page gives people the product shape. The guides give coding agents exact commands, invariants, source paths, and success conditions.</p>
 </div>
+
+## Install in one command
+
+```sh
+helm install doplane oci://ghcr.io/dirien/charts/doplane \
+  --namespace doplane-system --create-namespace
+```
+
+Released manager and runner images come from GHCR; the chart pins them to its version. Works on any cluster, including a local kind one.
 
 ## The object is the infrastructure record
 
@@ -61,7 +70,7 @@ doplane runs Pulumi under the hood: it reconciles the object with `pulumi do --s
 
 ## Bring your own components
 
-Author a component resource in any Pulumi language, publish it to a registry — including the Pulumi Cloud private registry — and doplane serves it as a typed, Kubernetes-native API:
+Write a component in whichever Pulumi language you like, publish it to a registry (the Pulumi Cloud private registry works too), and doplane serves it as a typed Kubernetes API:
 
 ```yaml
 apiVersion: typed.do.pulumi.com/v1alpha1
@@ -73,6 +82,8 @@ spec:
     replicas: 2
 ```
 
-One `DoProvider` with `typedResources` turns the component's schema into a generated CRD with `kubectl explain`, printer columns, and per-kind RBAC. The component code stays code; application teams get a Kubernetes object.
+One `DoProvider` with `typedResources` turns the component's schema into a real CRD: `kubectl explain` works, printer columns show Ready and Synced, RBAC applies per kind. The component code stays code. Application teams just get a Kubernetes object.
+
+Not sure what you can create? [Browse the Pulumi Registry and map any resource to a manifest](/guide/discover).
 
 [Start with a credential-free resource →](/guide/getting-started)

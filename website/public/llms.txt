@@ -7,7 +7,9 @@ Use the pages below as task context. Preserve the invariants and verify the succ
 ## Documentation
 
 - [Getting started](https://dirien.github.io/doplane/guide/getting-started)
+- [Discover providers and components](https://dirien.github.io/doplane/guide/discover)
 - [Choose an API](https://dirien.github.io/doplane/guide/choose-an-api)
+- [Build from source](https://dirien.github.io/doplane/guide/build-from-source)
 - [Control loop and state](https://dirien.github.io/doplane/concepts/control-loop)
 - [Dependencies and composites](https://dirien.github.io/doplane/concepts/dependencies)
 - [Day-2 operations](https://dirien.github.io/doplane/operations/day-2)

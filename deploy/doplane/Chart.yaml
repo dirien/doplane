@@ -3,7 +3,7 @@ name: doplane
 description: A Helm chart for the Pulumi Do operator
 type: application
 version: 0.1.0
-appVersion: 0.0.1
+appVersion: 0.1.0
 home: https://github.com/dirien/doplane
 sources:
   - https://github.com/dirien/doplane
@@ -19,6 +19,6 @@ annotations:
   artifacthub.io/license: Apache-2.0
   artifacthub.io/images: |
     - name: manager
-      image: controller:0.0.1
+      image: ghcr.io/dirien/doplane:0.1.0
     - name: runner
-      image: doplane-runner:dev
+      image: ghcr.io/dirien/doplane-runner:0.1.0

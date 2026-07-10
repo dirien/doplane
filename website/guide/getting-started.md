@@ -1,73 +1,41 @@
 ---
 title: Getting started
-description: Build doplane, install it on a Kubernetes cluster, and reconcile a credential-free resource.
+description: Install the released doplane operator on a Kubernetes cluster and reconcile a credential-free resource.
 ---
 
 # Getting started
 
 <div class="agent-contract">
-  <p><strong>Agent goal:</strong> install doplane on a Kubernetes cluster and prove that one <code>DoResource</code> reaches <code>Ready=True</code>. Stop if an existing cluster or cloud resource could be affected.</p>
+  <p><strong>Agent goal:</strong> install the released doplane chart on a Kubernetes cluster and prove that one <code>DoResource</code> reaches <code>Ready=True</code>. Stop if an existing cluster or cloud resource could be affected.</p>
 </div>
 
-doplane runs on any Kubernetes cluster — managed (EKS, GKE, AKS), on-prem, or local. This walkthrough uses a disposable local [kind](https://kind.sigs.k8s.io/) cluster because it needs nothing but Docker; notes call out the one step that differs on a remote cluster. The example uses the `random` provider, so it needs no cloud account and creates no billable resource.
+doplane runs on any Kubernetes cluster — managed (EKS, GKE, AKS), on-prem, or local. Released images are published to GHCR, so installation is one Helm command; nothing needs to be built. The example uses the `random` provider, so it needs no cloud account and creates no billable resource.
+
+Working on doplane itself, or want images built from your own checkout? That is a contributor flow: see [Build from source](/guide/build-from-source).
 
 ## Prerequisites
 
-Use a machine with these tools:
+- `kubectl` pointing at the cluster you want to use
+- Helm 3.8 or later (OCI registry support)
+- No cluster yet? `kind create cluster --name doplane` gives you a disposable local one
 
-- Docker or another container runtime supported by the Makefile
-- Go 1.24 or later
-- `kubectl` pointing at the cluster you want to use (or `kind` to create one)
-- GNU Make
-
-The build creates two images. The manager watches Kubernetes objects; the runner image executes provider operations in short-lived Jobs.
-
-## 1. Clone and pick a cluster
+## 1. Install doplane
 
 ```sh
-git clone https://github.com/dirien/doplane.git
-cd doplane
-
-kind create cluster --name doplane
-```
-
-Already have a cluster? Skip `kind create cluster` — every later step works against whatever `kubectl config current-context` points at. Confirm the context is the intended cluster before continuing (`kind-doplane` if you created one here).
-
-## 2. Build and load both images
-
-```sh
-make docker-build docker-build-runner \
-  IMG=doplane:dev \
-  RUNNER_IMG=doplane-runner:dev
-
-kind load docker-image doplane:dev doplane-runner:dev --name doplane
-```
-
-On a remote cluster, replace `kind load` by pushing both images to a registry the cluster can pull from, and use those references as `IMG` and `RUNNER_IMG` in the next step.
-
-Do not replace the runner image with the manager image. The manager is distroless and contains neither `pulumi` nor provider plugins.
-
-## 3. Install CRDs and deploy
-
-```sh
-make install deploy \
-  IMG=doplane:dev \
-  RUNNER_IMG=doplane-runner:dev
+helm install doplane oci://ghcr.io/dirien/charts/doplane \
+  --namespace doplane-system \
+  --create-namespace
 
 kubectl -n doplane-system rollout status deployment/doplane-controller-manager \
   --timeout=2m
 ```
 
-If your checkout deploys to another namespace, locate the manager with:
+The chart installs the CRDs and a manager Deployment pinned to the released manager and runner images. Add `--version <x.y.z>` to install a specific release; the [releases page](https://github.com/dirien/doplane/releases) lists them.
+
+## 2. Reconcile a resource
 
 ```sh
-kubectl get deployments --all-namespaces | grep doplane
-```
-
-## 4. Reconcile a resource
-
-```sh
-kubectl apply -f examples/01-simple-random-pet.yaml
+kubectl apply -f https://raw.githubusercontent.com/dirien/doplane/main/examples/01-simple-random-pet.yaml
 kubectl wait doresource/pet-simple --for=condition=Ready --timeout=2m
 kubectl get doresource pet-simple \
   -o jsonpath='{.status.id}{"\n"}{.status.conditions}{"\n"}'
@@ -87,7 +55,7 @@ kubectl describe doresource pet-simple
 kubectl get jobs --all-namespaces -l app.kubernetes.io/managed-by=doplane
 ```
 
-## 5. Make a declarative change
+## 3. Make a declarative change
 
 ```sh
 kubectl patch doresource pet-simple --type merge \
@@ -97,14 +65,19 @@ kubectl get doresource pet-simple -w
 
 The `random` provider does not support in-place reads or updates, so this patch ends with a terminal `Synced=False` / `UpdateNotSupported` condition. That is provider behavior, not proof that the control loop is broken — reverting the spec settles the resource again. Use a provider resource with read and patch support when testing drift correction.
 
+## 4. Pick your next resource
+
+The pet came from one provider in a much larger catalog. Any resource in the [Pulumi Registry](https://www.pulumi.com/registry/) — and any published component package — can become a manifest like the one you just applied. [Discover providers and components](/guide/discover) shows how to find the type token, pin the package, and generate a ready-to-edit example.
+
 ## Clean up
 
 ```sh
 kubectl delete doresource pet-simple
+helm uninstall doplane --namespace doplane-system
 kind delete cluster --name doplane   # only if you created it above
 ```
 
-Deletion waits for the provider delete unless `spec.deletionPolicy` is `Orphan`.
+Deletion waits for the provider delete unless `spec.deletionPolicy` is `Orphan`. `helm uninstall` keeps the CRDs (and therefore any remaining doplane objects); delete them explicitly only when nothing references external resources anymore.
 
 ## Next task
 

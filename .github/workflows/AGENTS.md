@@ -4,14 +4,15 @@
 
 <!-- AGENTS-GENERATED:START overview -->
 ## Overview
-Four workflows. Code gates run on push + pull request; documentation also
-supports manual deployment:
+Five workflows. Code gates run on push + pull request; documentation also
+supports manual deployment; releases run on tags:
 | Workflow | Runs | Notes |
 |----------|------|-------|
 | `lint.yml` | golangci-lint (strict `.golangci.yml`) | zero-tolerance gate |
 | `test.yml` | `make test` (unit + envtest) | envtest binaries downloaded by the Makefile |
 | `test-e2e.yml` | `make test-e2e` | installs latest kind, creates a throwaway cluster |
 | `docs.yml` | `npm ci && npm run docs:build` in `website/` | deploys GitHub Pages from `main`; PRs build without deploying |
+| `release.yml` | multi-arch image + chart publish on `v*` tags | pushes `ghcr.io/dirien/doplane[-runner]` and `oci://ghcr.io/dirien/charts/doplane`, then creates the GitHub release |
 <!-- AGENTS-GENERATED:END overview -->
 
 ## Setup & environment
