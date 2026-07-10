@@ -130,10 +130,13 @@ metrics:
 resources:
   limits:
     cpu: 500m
-    memory: 256Mi
+    # Headroom for caching trimmed provider schemas and running several
+    # blocking Job-backed reconciles at once; 256Mi OOM-kills the manager
+    # under real AWS load (many resource types in flight).
+    memory: 1Gi
   requests:
     cpu: 10m
-    memory: 64Mi
+    memory: 128Mi
 
 podSecurityContext:
   runAsNonRoot: true
