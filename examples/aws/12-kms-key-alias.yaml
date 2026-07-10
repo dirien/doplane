@@ -1,0 +1,67 @@
+# AWS 12 — KMS key + alias + usage policy
+#
+# A customer-managed encryption key with rotation enabled, a friendly alias,
+# and a customer-managed IAM policy scoped to encrypt/decrypt with exactly
+# this key. The alias targets the key id; the IAM policy references the key
+# ARN.
+#
+# Teardown note: deleting the key *schedules* deletion after
+# deletionWindowInDays (min 7) — AWS keeps it in PendingDeletion. The
+# DoResource and the alias are removed immediately.
+#
+#   suffix ─> key ─┬─> alias
+#                  └─> usepolicy
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-kms-key
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: key
+      type: aws:kms/key:Key
+      package: aws@7.34.0
+      properties:
+        description: doplane ${self.name} data key (${params.env})
+        deletionWindowInDays: 7
+        enableKeyRotation: true
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: alias
+      type: aws:kms/alias:Alias
+      package: aws@7.34.0
+      properties:
+        name: alias/${self.name}-${resources.suffix.id}
+        targetKeyId: ${resources.key.outputs.keyId}
+    - name: usepolicy
+      type: aws:iam/policy:Policy
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-kms-use-${resources.suffix.id}
+        policy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["kms:Encrypt","kms:Decrypt","kms:GenerateDataKey","kms:DescribeKey"],"Resource":"${resources.key.outputs.arn}"}]}'
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: vault-dev
+spec:
+  definition: aws-kms-key
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: vault-prod
+spec:
+  definition: aws-kms-key
+  parameters:
+    env: prod

@@ -1,0 +1,78 @@
+# AWS 08 — CloudWatch log group + metric alarm → SNS
+#
+# Observability plumbing: a retained log group, an SNS topic for alerts, and a
+# metric alarm that notifies the topic when the log group ingests an unusual
+# number of events. The alarm's alarmActions and dimensions reference the
+# topic ARN and the log group name respectively.
+#
+#   suffix ─> topic ─┐
+#            loggroup┴─> alarm
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-log-group-alarm
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: topic
+      type: aws:sns/topic:Topic
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-alerts-${resources.suffix.id}
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: loggroup
+      type: aws:cloudwatch/logGroup:LogGroup
+      package: aws@7.34.0
+      properties:
+        name: /doplane/${self.name}-${resources.suffix.id}
+        retentionInDays: 14
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: alarm
+      type: aws:cloudwatch/metricAlarm:MetricAlarm
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-log-flood-${resources.suffix.id}
+        comparisonOperator: GreaterThanThreshold
+        evaluationPeriods: 1
+        metricName: IncomingLogEvents
+        namespace: AWS/Logs
+        period: 300
+        statistic: Sum
+        threshold: 10000
+        treatMissingData: notBreaching
+        alarmDescription: Log ingestion spike for ${self.name}
+        dimensions:
+          LogGroupName: ${resources.loggroup.outputs.name}
+        alarmActions:
+          - ${resources.topic.outputs.arn}
+        okActions:
+          - ${resources.topic.outputs.arn}
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: obs-dev
+spec:
+  definition: aws-log-group-alarm
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: obs-prod
+spec:
+  definition: aws-log-group-alarm
+  parameters:
+    env: prod

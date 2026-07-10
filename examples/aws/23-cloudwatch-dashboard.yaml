@@ -1,0 +1,71 @@
+# AWS 23 — CloudWatch dashboard + log group + alarm
+#
+# An observability bundle: a log group, an alarm on its stored-bytes metric,
+# and a dashboard whose body embeds a text header plus a metric widget for the
+# same log group. The alarm's dimension and the dashboard body both reference
+# the log group name (one sibling source per value).
+#
+#   suffix ─> loggroup ─┬─> alarm     (dimension: LogGroupName)
+#                       └─> dashboard (widget references the log group)
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-dashboard
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: loggroup
+      type: aws:cloudwatch/logGroup:LogGroup
+      package: aws@7.34.0
+      properties:
+        name: /doplane/${self.name}-${resources.suffix.id}
+        retentionInDays: 7
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: alarm
+      type: aws:cloudwatch/metricAlarm:MetricAlarm
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-log-bytes-${resources.suffix.id}
+        comparisonOperator: GreaterThanThreshold
+        evaluationPeriods: 1
+        metricName: IncomingBytes
+        namespace: AWS/Logs
+        period: 3600
+        statistic: Sum
+        threshold: 1000000000
+        treatMissingData: notBreaching
+        dimensions:
+          LogGroupName: ${resources.loggroup.outputs.name}
+    - name: dashboard
+      type: aws:cloudwatch/dashboard:Dashboard
+      package: aws@7.34.0
+      properties:
+        dashboardName: ${self.name}-${resources.suffix.id}
+        dashboardBody: '{"widgets":[{"type":"text","x":0,"y":0,"width":24,"height":2,"properties":{"markdown":"# ${self.name} (${params.env}) — managed by doplane"}},{"type":"metric","x":0,"y":2,"width":12,"height":6,"properties":{"title":"Incoming log bytes","region":"us-east-2","stat":"Sum","period":3600,"metrics":[["AWS/Logs","IncomingBytes","LogGroupName","${resources.loggroup.outputs.name}"]]}}]}'
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: board-dev
+spec:
+  definition: aws-dashboard
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: board-prod
+spec:
+  definition: aws-dashboard
+  parameters:
+    env: prod

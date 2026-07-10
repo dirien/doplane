@@ -1,0 +1,77 @@
+# AWS 05 — DynamoDB table + data-access policy
+#
+# A single-table design with a global secondary index and TTL, plus a
+# standalone customer-managed IAM policy scoped to read/write exactly this
+# table (and its indexes). PAY_PER_REQUEST billing means no capacity to
+# provision and nothing to pay when idle. The policy references the table ARN.
+#
+# (The access policy is standalone rather than attached to a role — see
+# example 04 for why attachments are avoided under stateless delete.)
+#
+#   suffix ─> table ─> policy   (references table.arn)
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-dynamodb-table
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: table
+      type: aws:dynamodb/table:Table
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-${resources.suffix.id}
+        billingMode: PAY_PER_REQUEST
+        hashKey: pk
+        rangeKey: sk
+        attributes:
+          - name: pk
+            type: S
+          - name: sk
+            type: S
+          - name: gsi1pk
+            type: S
+        globalSecondaryIndexes:
+          - name: gsi1
+            hashKey: gsi1pk
+            projectionType: ALL
+        ttl:
+          attributeName: expiresAt
+          enabled: true
+        pointInTimeRecovery:
+          enabled: false
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: policy
+      type: aws:iam/policy:Policy
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-ddb-${resources.suffix.id}
+        description: Read/write access to the ${self.name} table
+        policy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["dynamodb:GetItem","dynamodb:PutItem","dynamodb:Query","dynamodb:UpdateItem","dynamodb:DeleteItem"],"Resource":["${resources.table.outputs.arn}","${resources.table.outputs.arn}/index/*"]}]}'
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: orders-dev
+spec:
+  definition: aws-dynamodb-table
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: orders-prod
+spec:
+  definition: aws-dynamodb-table
+  parameters:
+    env: prod

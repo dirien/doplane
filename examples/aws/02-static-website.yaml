@@ -1,0 +1,83 @@
+# AWS 02 — S3 static website
+#
+# A public static-website bucket: ownership controls + a public-access-block
+# that *allows* public policy, a website configuration, and a public-read
+# bucket policy. The policy references the bucket ARN and is gated (by the
+# reference graph) behind the public-access-block so the PutBucketPolicy call
+# is not rejected by BlockPublicPolicy.
+#
+#   suffix ─> bucket ─┬─> ownership
+#                     ├─> pab (public) ─> policy (public read)
+#                     └─> website
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-static-website
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: bucket
+      type: aws:s3/bucketV2:BucketV2
+      package: aws@7.34.0
+      properties:
+        bucket: ${self.name}-site-${resources.suffix.id}
+        forceDestroy: true
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: ownership
+      type: aws:s3/bucketOwnershipControls:BucketOwnershipControls
+      package: aws@7.34.0
+      properties:
+        bucket: ${resources.bucket.outputs.bucket}
+        rule:
+          objectOwnership: BucketOwnerPreferred
+    - name: pab
+      type: aws:s3/bucketPublicAccessBlock:BucketPublicAccessBlock
+      package: aws@7.34.0
+      properties:
+        bucket: ${resources.bucket.outputs.bucket}
+        blockPublicAcls: false
+        blockPublicPolicy: false
+        ignorePublicAcls: false
+        restrictPublicBuckets: false
+    - name: website
+      type: aws:s3/bucketWebsiteConfigurationV2:BucketWebsiteConfigurationV2
+      package: aws@7.34.0
+      properties:
+        bucket: ${resources.bucket.outputs.bucket}
+        indexDocument:
+          suffix: index.html
+        errorDocument:
+          key: error.html
+    - name: policy
+      type: aws:s3/bucketPolicy:BucketPolicy
+      package: aws@7.34.0
+      properties:
+        bucket: ${resources.pab.outputs.bucket}
+        policy: '{"Version":"2012-10-17","Statement":[{"Sid":"PublicReadGetObject","Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"${resources.bucket.outputs.arn}/*"}]}'
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: site-dev
+spec:
+  definition: aws-static-website
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: site-prod
+spec:
+  definition: aws-static-website
+  parameters:
+    env: prod

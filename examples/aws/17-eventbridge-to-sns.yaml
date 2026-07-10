@@ -1,0 +1,72 @@
+# AWS 17 — EventBridge scheduled rule → SNS
+#
+# A scheduled EventBridge rule that fires hourly and targets an SNS topic. The
+# topic policy grants the EventBridge service publish rights; the target
+# references the topic policy's ARN (== topic ARN) so it is created after the
+# policy exists.
+#
+#   suffix ─> topic ─> topicpolicy ─┐
+#            rule ──────────────────┴─> target
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-schedule-sns
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: topic
+      type: aws:sns/topic:Topic
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-tick-${resources.suffix.id}
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: topicpolicy
+      type: aws:sns/topicPolicy:TopicPolicy
+      package: aws@7.34.0
+      properties:
+        arn: ${resources.topic.outputs.arn}
+        policy: '{"Version":"2012-10-17","Statement":[{"Sid":"AllowEventBridge","Effect":"Allow","Principal":{"Service":"events.amazonaws.com"},"Action":"SNS:Publish","Resource":"${resources.topic.outputs.arn}"}]}'
+    - name: rule
+      type: aws:cloudwatch/eventRule:EventRule
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-hourly-${resources.suffix.id}
+        description: Hourly tick for ${self.name}
+        scheduleExpression: rate(1 hour)
+        state: ENABLED
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: target
+      type: aws:cloudwatch/eventTarget:EventTarget
+      package: aws@7.34.0
+      properties:
+        rule: ${resources.rule.outputs.name}
+        arn: ${resources.topicpolicy.outputs.arn}
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: cron-dev
+spec:
+  definition: aws-schedule-sns
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: cron-prod
+spec:
+  definition: aws-schedule-sns
+  parameters:
+    env: prod

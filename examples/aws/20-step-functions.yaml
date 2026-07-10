@@ -1,0 +1,61 @@
+# AWS 20 — Step Functions state machine
+#
+# A Standard Step Functions workflow (a minimal Pass → Wait → Succeed state
+# machine) plus the bare execution role it assumes. The role trusts the Step
+# Functions service via its inline assume-role policy — no separate policy
+# attachment, so both resources delete cleanly from their IDs. The state
+# machine references the role ARN.
+#
+#   suffix ─> role ─> statemachine
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-step-functions
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: role
+      type: aws:iam/role:Role
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-sfn-${resources.suffix.id}
+        assumeRolePolicy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"states.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: statemachine
+      type: aws:sfn/stateMachine:StateMachine
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-${resources.suffix.id}
+        type: STANDARD
+        roleArn: ${resources.role.outputs.arn}
+        definition: '{"Comment":"doplane demo","StartAt":"Start","States":{"Start":{"Type":"Pass","Next":"Wait"},"Wait":{"Type":"Wait","Seconds":5,"Next":"Done"},"Done":{"Type":"Succeed"}}}'
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: flow-dev
+spec:
+  definition: aws-step-functions
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: flow-prod
+spec:
+  definition: aws-step-functions
+  parameters:
+    env: prod

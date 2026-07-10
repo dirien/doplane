@@ -1,0 +1,72 @@
+# AWS 09 — ECR repository with lifecycle + policies
+#
+# A container registry building block: an image-scanning ECR repository, a
+# lifecycle policy that expires untagged images, a repository policy allowing
+# pulls, and a customer-managed IAM policy an app role would attach to pull
+# images. Repository and IAM policies reference the repo name/ARN.
+#
+#   suffix ─> repo ─┬─> lifecycle
+#                   ├─> repopolicy
+#                   └─> pullpolicy
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-ecr-repo
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: repo
+      type: aws:ecr/repository:Repository
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-${resources.suffix.id}
+        imageTagMutability: IMMUTABLE
+        forceDelete: true
+        imageScanningConfiguration:
+          scanOnPush: true
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: lifecycle
+      type: aws:ecr/lifecyclePolicy:LifecyclePolicy
+      package: aws@7.34.0
+      properties:
+        repository: ${resources.repo.outputs.name}
+        policy: '{"rules":[{"rulePriority":1,"description":"expire untagged after 10","selection":{"tagStatus":"untagged","countType":"imageCountMoreThan","countNumber":10},"action":{"type":"expire"}}]}'
+    - name: repopolicy
+      type: aws:ecr/repositoryPolicy:RepositoryPolicy
+      package: aws@7.34.0
+      properties:
+        repository: ${resources.repo.outputs.name}
+        policy: '{"Version":"2012-10-17","Statement":[{"Sid":"AllowPull","Effect":"Allow","Principal":"*","Action":["ecr:GetDownloadUrlForLayer","ecr:BatchGetImage","ecr:BatchCheckLayerAvailability"]}]}'
+    - name: pullpolicy
+      type: aws:iam/policy:Policy
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-ecr-pull-${resources.suffix.id}
+        policy: '{"Version":"2012-10-17","Statement":[{"Sid":"Auth","Effect":"Allow","Action":"ecr:GetAuthorizationToken","Resource":"*"},{"Sid":"Pull","Effect":"Allow","Action":["ecr:GetDownloadUrlForLayer","ecr:BatchGetImage","ecr:BatchCheckLayerAvailability"],"Resource":"${resources.repo.outputs.arn}"}]}'
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: reg-dev
+spec:
+  definition: aws-ecr-repo
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: reg-prod
+spec:
+  definition: aws-ecr-repo
+  parameters:
+    env: prod

@@ -1,0 +1,83 @@
+# AWS 16 — CloudWatch composite alarm
+#
+# Roll two metric alarms (a warning and a critical threshold on the same
+# metric) up into a single composite alarm. The composite's alarmRule names
+# both child alarms (built from the shared suffix — one sibling source), and
+# two tag values each reference one child alarm so the graph engine creates
+# the composite only after both children exist.
+#
+#   suffix ─┬─> alarm-warn ─┐
+#           └─> alarm-crit ─┴─> composite (rule over both)
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-composite-alarm
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: warn
+      type: aws:cloudwatch/metricAlarm:MetricAlarm
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-warn-${resources.suffix.id}
+        comparisonOperator: GreaterThanThreshold
+        evaluationPeriods: 1
+        metricName: IncomingLogEvents
+        namespace: AWS/Logs
+        period: 300
+        statistic: Sum
+        threshold: 5000
+        treatMissingData: notBreaching
+        alarmDescription: Warning tier for ${self.name}
+    - name: crit
+      type: aws:cloudwatch/metricAlarm:MetricAlarm
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-crit-${resources.suffix.id}
+        comparisonOperator: GreaterThanThreshold
+        evaluationPeriods: 1
+        metricName: IncomingLogEvents
+        namespace: AWS/Logs
+        period: 300
+        statistic: Sum
+        threshold: 20000
+        treatMissingData: notBreaching
+        alarmDescription: Critical tier for ${self.name}
+    - name: composite
+      type: aws:cloudwatch/compositeAlarm:CompositeAlarm
+      package: aws@7.34.0
+      properties:
+        alarmName: ${self.name}-${resources.suffix.id}
+        alarmRule: ALARM("${self.name}-warn-${resources.suffix.id}") OR ALARM("${self.name}-crit-${resources.suffix.id}")
+        alarmDescription: Rolls up warn+crit for ${self.name}
+        # each tag references one child alarm, gating the composite after both
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+          warnAlarm: ${resources.warn.outputs.name}
+          critAlarm: ${resources.crit.outputs.name}
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: alarms-dev
+spec:
+  definition: aws-composite-alarm
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: alarms-prod
+spec:
+  definition: aws-composite-alarm
+  parameters:
+    env: prod

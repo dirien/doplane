@@ -13,8 +13,6 @@ kind: DoCompositeDefinition
 metadata:
   name: secure-bucket
 spec:
-  requiredParameters:
-    - env
   resources:
     - name: suffix
       type: random:index/randomPet:RandomPet

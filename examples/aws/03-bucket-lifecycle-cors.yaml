@@ -1,0 +1,87 @@
+# AWS 03 — S3 bucket with versioning, lifecycle and CORS
+#
+# A data bucket configured for the browser: versioning on, a lifecycle rule
+# that expires noncurrent versions and aborts stale multipart uploads, and a
+# CORS policy. Exercises three S3 sub-configuration resources that all fan in
+# from the same bucket.
+#
+#   suffix ─> bucket ─┬─> versioning ─> lifecycle
+#                     └─> cors
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-bucket-lifecycle-cors
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: bucket
+      type: aws:s3/bucketV2:BucketV2
+      package: aws@7.34.0
+      properties:
+        bucket: ${self.name}-data-${resources.suffix.id}
+        forceDestroy: true
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: versioning
+      type: aws:s3/bucketVersioningV2:BucketVersioningV2
+      package: aws@7.34.0
+      properties:
+        bucket: ${resources.bucket.outputs.bucket}
+        versioningConfiguration:
+          status: Enabled
+    - name: lifecycle
+      type: aws:s3/bucketLifecycleConfigurationV2:BucketLifecycleConfigurationV2
+      package: aws@7.34.0
+      properties:
+        # depend on versioning so noncurrentVersionExpiration is meaningful
+        bucket: ${resources.versioning.outputs.bucket}
+        rules:
+          - id: expire-noncurrent
+            status: Enabled
+            filter: {}
+            noncurrentVersionExpiration:
+              noncurrentDays: 30
+            abortIncompleteMultipartUpload:
+              daysAfterInitiation: 7
+    - name: cors
+      type: aws:s3/bucketCorsConfigurationV2:BucketCorsConfigurationV2
+      package: aws@7.34.0
+      properties:
+        bucket: ${resources.bucket.outputs.bucket}
+        corsRules:
+          - allowedHeaders:
+              - "*"
+            allowedMethods:
+              - GET
+              - PUT
+            allowedOrigins:
+              - "*"
+            exposeHeaders:
+              - ETag
+            maxAgeSeconds: 3000
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: assets-dev
+spec:
+  definition: aws-bucket-lifecycle-cors
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: assets-prod
+spec:
+  definition: aws-bucket-lifecycle-cors
+  parameters:
+    env: prod

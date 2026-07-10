@@ -1,0 +1,68 @@
+# AWS 25 — SQS queue + consumer role + access policy
+#
+# A work queue and the pieces a consumer needs: a bare IAM role trusting the
+# ECS tasks service and a standalone customer-managed policy scoped to
+# receive/delete on exactly this queue. Role and policy are independent,
+# cleanly-deletable resources (the attachment binding them is left to the
+# consumer's governance — see example 04 on stateless-delete of attachments).
+#
+#   suffix ─> queue ─> policy   (references queue.arn)
+#            role
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-sqs-consumer
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: queue
+      type: aws:sqs/queue:Queue
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-${resources.suffix.id}
+        messageRetentionSeconds: 86400
+        visibilityTimeoutSeconds: 30
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: role
+      type: aws:iam/role:Role
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-consumer-${resources.suffix.id}
+        assumeRolePolicy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ecs-tasks.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: policy
+      type: aws:iam/policy:Policy
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-consume-${resources.suffix.id}
+        description: Consume messages from the ${self.name} queue
+        policy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["sqs:ReceiveMessage","sqs:DeleteMessage","sqs:GetQueueAttributes","sqs:ChangeMessageVisibility"],"Resource":"${resources.queue.outputs.arn}"}]}'
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: consumer-dev
+spec:
+  definition: aws-sqs-consumer
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: consumer-prod
+spec:
+  definition: aws-sqs-consumer
+  parameters:
+    env: prod

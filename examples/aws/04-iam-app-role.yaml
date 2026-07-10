@@ -1,0 +1,63 @@
+# AWS 04 — IAM application role + permission policy
+#
+# The "app identity kit" a platform team hands out: an EC2-assumable IAM role
+# and a standalone customer-managed permission policy. Both are independent,
+# cleanly-deletable resources.
+#
+# Why no rolePolicyAttachment / instanceProfile here: stateless `pulumi do
+# delete` receives only the resource ID (no input state), so the provider's
+# DetachRolePolicy / DeleteInstanceProfile run without the role name and fail
+# to tear down. Binding the policy to a role is therefore left to the
+# consumer's governance until the upstream fix lands (pulumi/pulumi#23837).
+# Bare roles and standalone policies delete from their ID alone.
+#
+#   suffix ─┬─> role
+#           └─> policy
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-iam-app-role
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: role
+      type: aws:iam/role:Role
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-app-${resources.suffix.id}
+        assumeRolePolicy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: policy
+      type: aws:iam/policy:Policy
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-app-${resources.suffix.id}
+        description: App logging + read-only S3 for ${self.name}
+        policy: '{"Version":"2012-10-17","Statement":[{"Sid":"Logs","Effect":"Allow","Action":["logs:CreateLogStream","logs:PutLogEvents","logs:CreateLogGroup"],"Resource":"arn:aws:logs:*:*:*"},{"Sid":"ReadS3","Effect":"Allow","Action":["s3:GetObject","s3:ListBucket"],"Resource":"*"}]}'
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: api-dev
+spec:
+  definition: aws-iam-app-role
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: api-prod
+spec:
+  definition: aws-iam-app-role
+  parameters:
+    env: prod

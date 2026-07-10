@@ -1,0 +1,88 @@
+# AWS 19 — VPC security group with rules
+#
+# A web-tier security group in a VPC, using the modern standalone rule
+# resources (aws:vpc/securityGroupIngressRule / ...EgressRule) rather than
+# inline blocks. Two ingress rules (HTTP/HTTPS from anywhere) and one
+# all-egress rule reference the security group id.
+#
+#   suffix ─> vpc ─> sg ─┬─> ingress-http
+#                        ├─> ingress-https
+#                        └─> egress-all
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-security-group
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: vpc
+      type: aws:ec2/vpc:Vpc
+      package: aws@7.34.0
+      properties:
+        cidrBlock: 10.40.0.0/16
+        tags:
+          Name: ${self.name}-${resources.suffix.id}
+          env: ${params.env}
+    - name: sg
+      type: aws:ec2/securityGroup:SecurityGroup
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-web-${resources.suffix.id}
+        description: Web tier for ${self.name}
+        vpcId: ${resources.vpc.id}
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: ingresshttp
+      type: aws:vpc/securityGroupIngressRule:SecurityGroupIngressRule
+      package: aws@7.34.0
+      properties:
+        securityGroupId: ${resources.sg.id}
+        ipProtocol: tcp
+        fromPort: 80
+        toPort: 80
+        cidrIpv4: 0.0.0.0/0
+        description: HTTP
+    - name: ingresshttps
+      type: aws:vpc/securityGroupIngressRule:SecurityGroupIngressRule
+      package: aws@7.34.0
+      properties:
+        securityGroupId: ${resources.sg.id}
+        ipProtocol: tcp
+        fromPort: 443
+        toPort: 443
+        cidrIpv4: 0.0.0.0/0
+        description: HTTPS
+    - name: egressall
+      type: aws:vpc/securityGroupEgressRule:SecurityGroupEgressRule
+      package: aws@7.34.0
+      properties:
+        securityGroupId: ${resources.sg.id}
+        ipProtocol: "-1"
+        cidrIpv4: 0.0.0.0/0
+        description: All egress
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: web-dev
+spec:
+  definition: aws-security-group
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: web-prod
+spec:
+  definition: aws-security-group
+  parameters:
+    env: prod

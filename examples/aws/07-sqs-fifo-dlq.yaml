@@ -1,0 +1,64 @@
+# AWS 07 — SQS FIFO queue with dead-letter queue
+#
+# A FIFO work queue with content-based deduplication and a redrive policy that
+# ships poison messages to a FIFO dead-letter queue after 5 failed receives.
+# The main queue's redrivePolicy references the DLQ ARN, so the graph engine
+# creates the DLQ first and tears it down last.
+#
+#   suffix ─> dlq ─> main (redrive → dlq.arn)
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-sqs-fifo-dlq
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: dlq
+      type: aws:sqs/queue:Queue
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-dlq-${resources.suffix.id}.fifo
+        fifoQueue: true
+        messageRetentionSeconds: 1209600
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: main
+      type: aws:sqs/queue:Queue
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-main-${resources.suffix.id}.fifo
+        fifoQueue: true
+        contentBasedDeduplication: true
+        deduplicationScope: messageGroup
+        fifoThroughputLimit: perMessageGroupId
+        visibilityTimeoutSeconds: 30
+        redrivePolicy: '{"deadLetterTargetArn":"${resources.dlq.outputs.arn}","maxReceiveCount":5}'
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: jobs-dev
+spec:
+  definition: aws-sqs-fifo-dlq
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: jobs-prod
+spec:
+  definition: aws-sqs-fifo-dlq
+  parameters:
+    env: prod

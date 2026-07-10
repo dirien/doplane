@@ -1,0 +1,45 @@
+# AWS 26 — Pulumi COMPONENT resource (component engine)
+#
+# Unlike examples 01-25 (each a DoCompositeDefinition rendering stateless
+# `pulumi do` resources), this drives a real Pulumi multi-language COMPONENT:
+# `aws-platform:index:SecureBucket` from github.com/dirien/doplane-components.
+#
+# Components can't be driven by stateless CRUD, so the operator orchestrates
+# this through its ephemeral engine: it resolves the git source, compiles the
+# TypeScript component on first use, runs `pulumi up` against a throwaway
+# file:// backend inside the runner Job, and persists the exported checkpoint
+# in status.engineState (etcd stays the state store). Update/delete re-import
+# that checkpoint — so the attachment/stateless-delete caveats of the
+# composite examples do not apply here; the engine handles full lifecycle.
+#
+# Two DoResources = two stacks. Each SecureBucket wraps a bucket + versioning
+# + SSE + public-access-block; AWS auto-suffixes the bucket name so the two
+# instances never collide.
+#
+# Prerequisites:
+#   INCLUDE_PULUMI_TOKEN=1 ./hack/sync-creds.sh   # PULUMI_ACCESS_TOKEN + AWS_*
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoResource
+metadata:
+  name: platform-bucket-dev
+spec:
+  type: aws-platform:index:SecureBucket
+  package: github.com/dirien/doplane-components//aws-platform
+  properties:
+    bucketPrefix: doplane-dev
+    versioning: true
+    tags:
+      env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoResource
+metadata:
+  name: platform-bucket-prod
+spec:
+  type: aws-platform:index:SecureBucket
+  package: github.com/dirien/doplane-components//aws-platform
+  properties:
+    bucketPrefix: doplane-prod
+    versioning: true
+    tags:
+      env: prod

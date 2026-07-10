@@ -1,0 +1,74 @@
+# AWS 10 — SSM Parameter Store hierarchy
+#
+# A per-service configuration tree in SSM Parameter Store. Three String
+# parameters under a common path fan out from the random suffix and are
+# created in parallel — a good test of independent sibling resources (no
+# cross-references) instantiated twice.
+#
+#   suffix ─┬─> host
+#           ├─> port
+#           └─> feature-flag
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-ssm-config
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: host
+      type: aws:ssm/parameter:Parameter
+      package: aws@7.34.0
+      properties:
+        name: /doplane/${self.name}-${resources.suffix.id}/db/host
+        type: String
+        value: db.${params.env}.internal
+        description: Database host for ${self.name}
+        tier: Standard
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: port
+      type: aws:ssm/parameter:Parameter
+      package: aws@7.34.0
+      properties:
+        name: /doplane/${self.name}-${resources.suffix.id}/db/port
+        type: String
+        value: "5432"
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: feature
+      type: aws:ssm/parameter:Parameter
+      package: aws@7.34.0
+      properties:
+        name: /doplane/${self.name}-${resources.suffix.id}/features/beta
+        type: String
+        value: "true"
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: cfg-dev
+spec:
+  definition: aws-ssm-config
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: cfg-prod
+spec:
+  definition: aws-ssm-config
+  parameters:
+    env: prod

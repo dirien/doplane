@@ -1,0 +1,76 @@
+# AWS 18 — CloudWatch log metric filter + alarm
+#
+# Turn log lines into a metric and alarm on it: a log group, a metric filter
+# that counts ERROR lines into a custom metric, and an alarm that fires when
+# the count crosses a threshold. The alarm matches the filter's metric by
+# name/namespace (no cross-reference needed).
+#
+#   suffix ─> loggroup ─> filter
+#            alarm  (matches filter's metric)
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: aws-log-metrics
+spec:
+  resources:
+    - name: suffix
+      type: random:index/randomString:RandomString
+      package: random@4.21.0
+      properties:
+        length: 6
+        special: false
+        upper: false
+        numeric: true
+    - name: loggroup
+      type: aws:cloudwatch/logGroup:LogGroup
+      package: aws@7.34.0
+      properties:
+        name: /doplane/${self.name}-${resources.suffix.id}
+        retentionInDays: 14
+        tags:
+          managed-by: doplane
+          env: ${params.env}
+    - name: filter
+      type: aws:cloudwatch/logMetricFilter:LogMetricFilter
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-errors-${resources.suffix.id}
+        logGroupName: ${resources.loggroup.outputs.name}
+        pattern: ERROR
+        metricTransformation:
+          name: ErrorCount
+          namespace: doplane/${self.name}
+          value: "1"
+          defaultValue: "0"
+    - name: alarm
+      type: aws:cloudwatch/metricAlarm:MetricAlarm
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-error-rate-${resources.suffix.id}
+        comparisonOperator: GreaterThanOrEqualToThreshold
+        evaluationPeriods: 1
+        metricName: ErrorCount
+        namespace: doplane/${self.name}
+        period: 300
+        statistic: Sum
+        threshold: 5
+        treatMissingData: notBreaching
+        alarmDescription: Error log rate for ${self.name}
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: logs-dev
+spec:
+  definition: aws-log-metrics
+  parameters:
+    env: dev
+---
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoComposite
+metadata:
+  name: logs-prod
+spec:
+  definition: aws-log-metrics
+  parameters:
+    env: prod
