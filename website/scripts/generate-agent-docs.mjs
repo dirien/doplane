@@ -5,7 +5,9 @@ import { fileURLToPath } from 'node:url'
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const pages = [
   ['Getting started', 'guide/getting-started.md'],
+  ['Discover providers and components', 'guide/discover.md'],
   ['Choose an API', 'guide/choose-an-api.md'],
+  ['Build from source', 'guide/build-from-source.md'],
   ['Control loop and state', 'concepts/control-loop.md'],
   ['Dependencies and composites', 'concepts/dependencies.md'],
   ['Day-2 operations', 'operations/day-2.md'],

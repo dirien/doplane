@@ -32,7 +32,7 @@ Do not move provider execution into the manager to reduce Job overhead. The prop
 Configure per-resource runners with Helm:
 
 ```sh
-helm upgrade --install doplane deploy/doplane \
+helm upgrade --install doplane oci://ghcr.io/dirien/charts/doplane \
   --namespace doplane-system \
   --create-namespace \
   --set runner.namespaceMode=resource
@@ -45,7 +45,7 @@ In `resource` mode, namespace deletion can outlive the place where a delete Job 
 `watchNamespaces` limits namespaced reconciliation. The Helm chart replaces broad manager RBAC with Roles in the selected namespaces while retaining the minimum cluster access required for cluster-scoped definitions.
 
 ```sh
-helm upgrade --install doplane deploy/doplane \
+helm upgrade --install doplane oci://ghcr.io/dirien/charts/doplane \
   --namespace doplane-system \
   --set 'watchNamespaces={team-a,team-b}' \
   --set runner.namespaceMode=resource

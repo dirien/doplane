@@ -7,7 +7,9 @@ Use the pages below as task context. Preserve the invariants and verify the succ
 ## Documentation
 
 - [Getting started](https://dirien.github.io/doplane/guide/getting-started)
+- [Discover providers and components](https://dirien.github.io/doplane/guide/discover)
 - [Choose an API](https://dirien.github.io/doplane/guide/choose-an-api)
+- [Build from source](https://dirien.github.io/doplane/guide/build-from-source)
 - [Control loop and state](https://dirien.github.io/doplane/concepts/control-loop)
 - [Dependencies and composites](https://dirien.github.io/doplane/concepts/dependencies)
 - [Day-2 operations](https://dirien.github.io/doplane/operations/day-2)
@@ -28,68 +30,36 @@ Source: https://dirien.github.io/doplane/guide/getting-started
 # Getting started
 
 <div class="agent-contract">
-  <p><strong>Agent goal:</strong> install doplane on a Kubernetes cluster and prove that one <code>DoResource</code> reaches <code>Ready=True</code>. Stop if an existing cluster or cloud resource could be affected.</p>
+  <p><strong>Agent goal:</strong> install the released doplane chart on a Kubernetes cluster and prove that one <code>DoResource</code> reaches <code>Ready=True</code>. Stop if an existing cluster or cloud resource could be affected.</p>
 </div>
 
-doplane runs on any Kubernetes cluster — managed (EKS, GKE, AKS), on-prem, or local. This walkthrough uses a disposable local [kind](https://kind.sigs.k8s.io/) cluster because it needs nothing but Docker; notes call out the one step that differs on a remote cluster. The example uses the `random` provider, so it needs no cloud account and creates no billable resource.
+doplane runs on any Kubernetes cluster — managed (EKS, GKE, AKS), on-prem, or local. Released images are published to GHCR, so installation is one Helm command; nothing needs to be built. The example uses the `random` provider, so it needs no cloud account and creates no billable resource.
+
+Working on doplane itself, or want images built from your own checkout? That is a contributor flow: see [Build from source](/guide/build-from-source).
 
 ## Prerequisites
 
-Use a machine with these tools:
+- `kubectl` pointing at the cluster you want to use
+- Helm 3.8 or later (OCI registry support)
+- No cluster yet? `kind create cluster --name doplane` gives you a disposable local one
 
-- Docker or another container runtime supported by the Makefile
-- Go 1.24 or later
-- `kubectl` pointing at the cluster you want to use (or `kind` to create one)
-- GNU Make
-
-The build creates two images. The manager watches Kubernetes objects; the runner image executes provider operations in short-lived Jobs.
-
-## 1. Clone and pick a cluster
+## 1. Install doplane
 
 ```sh
-git clone https://github.com/dirien/doplane.git
-cd doplane
-
-kind create cluster --name doplane
-```
-
-Already have a cluster? Skip `kind create cluster` — every later step works against whatever `kubectl config current-context` points at. Confirm the context is the intended cluster before continuing (`kind-doplane` if you created one here).
-
-## 2. Build and load both images
-
-```sh
-make docker-build docker-build-runner \
-  IMG=doplane:dev \
-  RUNNER_IMG=doplane-runner:dev
-
-kind load docker-image doplane:dev doplane-runner:dev --name doplane
-```
-
-On a remote cluster, replace `kind load` by pushing both images to a registry the cluster can pull from, and use those references as `IMG` and `RUNNER_IMG` in the next step.
-
-Do not replace the runner image with the manager image. The manager is distroless and contains neither `pulumi` nor provider plugins.
-
-## 3. Install CRDs and deploy
-
-```sh
-make install deploy \
-  IMG=doplane:dev \
-  RUNNER_IMG=doplane-runner:dev
+helm install doplane oci://ghcr.io/dirien/charts/doplane \
+  --namespace doplane-system \
+  --create-namespace
 
 kubectl -n doplane-system rollout status deployment/doplane-controller-manager \
   --timeout=2m
 ```
 
-If your checkout deploys to another namespace, locate the manager with:
+The chart installs the CRDs and a manager Deployment pinned to the released manager and runner images. Add `--version <x.y.z>` to install a specific release; the [releases page](https://github.com/dirien/doplane/releases) lists them.
+
+## 2. Reconcile a resource
 
 ```sh
-kubectl get deployments --all-namespaces | grep doplane
-```
-
-## 4. Reconcile a resource
-
-```sh
-kubectl apply -f examples/01-simple-random-pet.yaml
+kubectl apply -f https://raw.githubusercontent.com/dirien/doplane/main/examples/01-simple-random-pet.yaml
 kubectl wait doresource/pet-simple --for=condition=Ready --timeout=2m
 kubectl get doresource pet-simple \
   -o jsonpath='{.status.id}{"\n"}{.status.conditions}{"\n"}'
@@ -109,7 +79,7 @@ kubectl describe doresource pet-simple
 kubectl get jobs --all-namespaces -l app.kubernetes.io/managed-by=doplane
 ```
 
-## 5. Make a declarative change
+## 3. Make a declarative change
 
 ```sh
 kubectl patch doresource pet-simple --type merge \
@@ -119,18 +89,101 @@ kubectl get doresource pet-simple -w
 
 The `random` provider does not support in-place reads or updates, so this patch ends with a terminal `Synced=False` / `UpdateNotSupported` condition. That is provider behavior, not proof that the control loop is broken — reverting the spec settles the resource again. Use a provider resource with read and patch support when testing drift correction.
 
+## 4. Pick your next resource
+
+The pet came from one provider in a much larger catalog. Any resource in the [Pulumi Registry](https://www.pulumi.com/registry/) — and any published component package — can become a manifest like the one you just applied. [Discover providers and components](/guide/discover) shows how to find the type token, pin the package, and generate a ready-to-edit example.
+
 ## Clean up
 
 ```sh
 kubectl delete doresource pet-simple
+helm uninstall doplane --namespace doplane-system
 kind delete cluster --name doplane   # only if you created it above
 ```
 
-Deletion waits for the provider delete unless `spec.deletionPolicy` is `Orphan`.
+Deletion waits for the provider delete unless `spec.deletionPolicy` is `Orphan`. `helm uninstall` keeps the CRDs (and therefore any remaining doplane objects); delete them explicitly only when nothing references external resources anymore.
 
 ## Next task
 
 Choose the right abstraction before adding a cloud resource: [raw, provider-backed, typed, or composite API](/guide/choose-an-api).
+
+
+---
+
+# Discover providers and components
+
+Source: https://dirien.github.io/doplane/guide/discover
+
+# Discover providers and components
+
+<div class="agent-contract">
+  <p><strong>Agent goal:</strong> resolve a user's intent ("an S3 bucket", "a DigitalOcean droplet") to an exact type token and pinned package before writing a manifest. Never guess property names — read the schema or the registry docs.</p>
+</div>
+
+Everything doplane manages comes from the [Pulumi Registry](https://www.pulumi.com/registry/): 150+ providers for clouds, SaaS APIs, databases, and Kubernetes itself, plus component packages authored in regular programming languages. This page maps a registry entry to a doplane manifest.
+
+## From registry page to type token
+
+A `DoResource` needs two identifiers:
+
+- `spec.type` — the resource's **type token**, shaped `<package>:<module>/<name>:<Name>`, for example `aws:s3/bucketV2:BucketV2` or `digitalocean:index/droplet:Droplet`
+- `spec.package` — the provider package, pinned to a version: `aws@7.34.0`
+
+Find both in the registry: pick a provider, open the resource under **API Docs**, and read the token from the page's import section (every resource page ends with an `Import` example that spells it out). The provider's changelog lists versions; pin one instead of tracking latest — an unpinned package can resolve differently across reconciles and emits a warning event.
+
+```yaml
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoResource
+metadata:
+  name: assets
+spec:
+  type: aws:s3/bucketV2:BucketV2
+  package: aws@7.34.0
+  properties:
+    bucket: product-assets
+```
+
+## Generate a ready-to-edit example
+
+From a repository checkout, `hack/provider-help.sh` reads the provider schema and prints required inputs, optional inputs, the output paths usable in `spec.references`, and an example manifest for one token:
+
+```sh
+./hack/provider-help.sh aws@7.34.0 aws:s3/bucketV2:BucketV2
+```
+
+It needs `pulumi` and `jq`. For the raw schema, use the Pulumi CLI directly:
+
+```sh
+pulumi package get-schema aws@7.34.0 | jq '.resources["aws:s3/bucketV2:BucketV2"]'
+```
+
+Guessing is safe, too: doplane validates `spec.properties` against the provider schema before any cloud call, so a wrong property name ends with a `ValidationFailed` condition naming the offending field — no mutation runs.
+
+## Components
+
+The registry also hosts **component packages**: reusable infrastructure written in TypeScript, Go, Python, C#, or Java and published with a schema. The Pulumi Cloud private registry serves your organization's own components the same way, addressed as `private/<org>/<name>`.
+
+Consume a component like any provider resource:
+
+```yaml
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoResource
+metadata:
+  name: web-app
+spec:
+  type: web-app:index:WebAppComponent
+  package: private/ediri/web-app
+  properties:
+    replicas: 2
+```
+
+Private registry access needs a `PULUMI_ACCESS_TOKEN` in the runner's credentials Secret; a missing or under-scoped token surfaces as `RegistryAuthMissing` or `RegistryResolveFailed`. To hide the token and the package pin from application teams, register the component on a `DoProvider` with `typedResources` — doplane generates a dedicated CRD from the component's schema ([choose an API](/guide/choose-an-api#typed-provider-resource)). Components run in an ephemeral engine inside the runner Job; [Control loop and state](/concepts/control-loop#component-resources) explains the checkpoint.
+
+Working examples in the repository: [`examples/08-private-registry-component.yaml`](https://github.com/dirien/doplane/blob/main/examples/08-private-registry-component.yaml), [`examples/12`](https://github.com/dirien/doplane/blob/main/examples/12-typed-private-registry-component-provider.yaml) and [`13`](https://github.com/dirien/doplane/blob/main/examples/13-typed-private-registry-component.yaml).
+
+## Curate what teams may use
+
+Discovery is for platform engineers; application teams should meet a narrower surface. Put the package pin and credentials in a `DoProvider` profile and enforce the approved resource list with `allowedResources` — a token outside the list fails with `ResourceNotAllowed` before any provider call. [Choose an API](/guide/choose-an-api) covers the options.
 
 
 ---
@@ -227,6 +280,90 @@ Use a generic `DoComposite` while the API is evolving. Add `spec.api` to the def
 - Use `allowedResources` to enforce the approved surface, not as documentation only.
 - Treat generated typed CRDs as controller-owned. Change the source profile or definition instead of patching generated CRDs.
 - Test a composite definition with a credential-free provider before introducing billable resources.
+
+
+---
+
+# Build from source
+
+Source: https://dirien.github.io/doplane/guide/build-from-source
+
+# Build from source
+
+<div class="agent-contract">
+  <p><strong>Agent goal:</strong> build both images from the working tree and deploy them to a disposable cluster. This is the contributor flow; users installing doplane should follow <a href="/doplane/guide/getting-started">Getting started</a> instead.</p>
+</div>
+
+Use this path when you change doplane's code and want to run the result: released images from GHCR cannot contain your local changes.
+
+## Prerequisites
+
+- Docker or another container runtime supported by the Makefile
+- Go 1.24 or later
+- `kind` (a disposable local cluster keeps experiments away from real workloads)
+- `kubectl`, GNU Make
+
+## 1. Create a test cluster
+
+```sh
+git clone https://github.com/dirien/doplane.git
+cd doplane
+
+kind create cluster --name doplane
+```
+
+Confirm that `kubectl config current-context` prints `kind-doplane` before continuing.
+
+## 2. Build and load both images
+
+```sh
+make docker-build docker-build-runner \
+  IMG=doplane:dev \
+  RUNNER_IMG=doplane-runner:dev
+
+kind load docker-image doplane:dev doplane-runner:dev --name doplane
+```
+
+The manager image watches Kubernetes objects; the runner image executes provider operations in short-lived Jobs. Do not replace the runner image with the manager image: the manager is distroless and contains neither `pulumi` nor provider plugins.
+
+On a remote test cluster, push the images to a registry the cluster can pull from and use those references as `IMG` and `RUNNER_IMG`.
+
+## 3. Install CRDs and deploy
+
+```sh
+make install deploy \
+  IMG=doplane:dev \
+  RUNNER_IMG=doplane-runner:dev
+
+kubectl -n doplane-system rollout status deployment/doplane-controller-manager \
+  --timeout=2m
+```
+
+This is the kustomize delivery path (`deploy/kustomize/`). The Helm chart (`deploy/doplane/`) must stay behaviorally equivalent — when you change one, mirror the other. Render both and inspect:
+
+```sh
+make helm-lint helm-template
+bin/kustomize build deploy/kustomize/default
+```
+
+## 4. Verify with an example
+
+```sh
+kubectl apply -f examples/01-simple-random-pet.yaml
+kubectl wait doresource/pet-simple --for=condition=Ready --timeout=2m
+```
+
+The `examples/` levels 1–6 and 9–11 need no cloud credentials. Repository conventions, test commands, and invariants live in [`AGENTS.md`](https://github.com/dirien/doplane/blob/main/AGENTS.md) — read it before editing code.
+
+## Releasing
+
+Tags matching `v*` trigger the release workflow: it builds multi-arch manager and runner images, pushes them to `ghcr.io/dirien/doplane` and `ghcr.io/dirien/doplane-runner`, publishes the chart to `oci://ghcr.io/dirien/charts/doplane`, and creates the GitHub release.
+
+## Clean up
+
+```sh
+kind delete cluster --name doplane
+```
 
 
 ---
@@ -532,7 +669,7 @@ Do not move provider execution into the manager to reduce Job overhead. The prop
 Configure per-resource runners with Helm:
 
 ```sh
-helm upgrade --install doplane deploy/doplane \
+helm upgrade --install doplane oci://ghcr.io/dirien/charts/doplane \
   --namespace doplane-system \
   --create-namespace \
   --set runner.namespaceMode=resource
@@ -545,7 +682,7 @@ In `resource` mode, namespace deletion can outlive the place where a delete Job 
 `watchNamespaces` limits namespaced reconciliation. The Helm chart replaces broad manager RBAC with Roles in the selected namespaces while retaining the minimum cluster access required for cluster-scoped definitions.
 
 ```sh
-helm upgrade --install doplane deploy/doplane \
+helm upgrade --install doplane oci://ghcr.io/dirien/charts/doplane \
   --namespace doplane-system \
   --set 'watchNamespaces={team-a,team-b}' \
   --set runner.namespaceMode=resource

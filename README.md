@@ -332,7 +332,20 @@ helm install doplane deploy/doplane -n doplane-system \
   --set runner.namespaceMode=resource
 ```
 
-## Getting started (kind)
+## Getting started
+
+Install the released operator on any cluster (images are published to GHCR
+by the release workflow):
+
+```sh
+helm install doplane oci://ghcr.io/dirien/charts/doplane \
+  --namespace doplane-system --create-namespace
+
+kubectl apply -f examples/01-simple-random-pet.yaml
+kubectl get doresources -w
+```
+
+## Contributing: build and deploy from source (kind)
 
 ```sh
 kind create cluster --name doplane

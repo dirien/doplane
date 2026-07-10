@@ -32,6 +32,7 @@ export default defineConfig({
         text: 'Start here',
         items: [
           { text: 'Getting started', link: '/guide/getting-started' },
+          { text: 'Discover providers and components', link: '/guide/discover' },
           { text: 'Choose an API', link: '/guide/choose-an-api' }
         ]
       },
@@ -54,6 +55,12 @@ export default defineConfig({
         items: [
           { text: 'Repository context', link: '/reference/agent-context' },
           { text: 'Conditions and failures', link: '/reference/conditions' }
+        ]
+      },
+      {
+        text: 'Contributing',
+        items: [
+          { text: 'Build from source', link: '/guide/build-from-source' }
         ]
       }
     ],
