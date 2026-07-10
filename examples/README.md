@@ -18,7 +18,7 @@ the registry token and a kubeconfig for the runner:
 | 8 | `08-private-registry-component.yaml` | COMPONENT from the Pulumi Cloud private registry (`private/ediri/web-app`), orchestrated by an ephemeral engine; checkpoint persisted in `status.engineState` |
 | 9 | `09-provider-profile.yaml` | `DoProvider` profile: platform-pinned package, allow-list enforcement, `providerRef` on raw resources — no cloud account needed |
 | 10 | `10-cataloged-composite.yaml` | the full provider UX: profile + cataloged composite hiding tokens, versions and wiring from app teams — no cloud account needed |
-| 11 | `11-secrets-in-and-out.yaml` | `valuesFrom` secret inputs (value never in etcd/logs, redacted outputs) + `writeConnectionSecretToRef` connection secret — no cloud account needed |
+| 11 | `11-secrets-in-and-out.yaml` | `valuesFrom` secret inputs (value kept out of manifests, events and logs; never in identity-forming properties) + `writeConnectionSecretToRef` connection secret — no cloud account needed |
 | 12 | `12-typed-private-registry-component-provider.yaml` + `13-typed-private-registry-component.yaml` | component package schema exposed as a generated typed CRD; typed object drives the component engine |
 
 Generated help for any resource type (required/optional inputs, reference
