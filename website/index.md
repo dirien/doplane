@@ -4,13 +4,13 @@ layout: home
 hero:
   name: "Cloud resources."
   text: "Kubernetes-native."
-  tagline: Manage provider resources through Kubernetes objects. No Pulumi programs, stacks, or state files.
+  tagline: Pulumi under the hood, Kubernetes objects on the surface. The whole Pulumi ecosystem as declarative APIs on any cluster — no separate state service to operate.
   image:
     src: /logo.svg
     alt: doplane
   actions:
     - theme: brand
-      text: Run it on kind
+      text: Get started
       link: /guide/getting-started
     - theme: alt
       text: View on GitHub
@@ -21,8 +21,8 @@ features:
     title: One declarative control loop
     details: Apply a DoResource. doplane validates it, calls the provider, and records observed state in the object's status.
   - icon: "⌁"
-    title: Any Pulumi provider
-    details: Pin provider packages once, restrict allowed resource types, and give teams Kubernetes-native APIs.
+    title: The whole Pulumi ecosystem
+    details: Use any Pulumi provider, and component resources authored in TypeScript, Go, Python, C# or Java — pinned, allow-listed, and served as Kubernetes-native APIs.
   - icon: "◇"
     title: Composable platform APIs
     details: Turn dependency graphs into reusable composites or generated typed CRDs for application teams.
@@ -57,6 +57,22 @@ spec:
       managed-by: doplane
 ```
 
-doplane reconciles the object with `pulumi do --stateless`, then writes the provider ID, outputs, conditions, and applied generation to `status`. Kubernetes remains the control plane and the state store.
+doplane runs Pulumi under the hood: it reconciles the object with `pulumi do --stateless`, then writes the provider ID, outputs, conditions, and applied generation to `status`. Kubernetes remains the control plane and the state store.
+
+## Bring your own components
+
+Author a component resource in any Pulumi language, publish it to a registry — including the Pulumi Cloud private registry — and doplane serves it as a typed, Kubernetes-native API:
+
+```yaml
+apiVersion: typed.do.pulumi.com/v1alpha1
+kind: WebAppComponent
+metadata:
+  name: storefront
+spec:
+  forProvider:
+    replicas: 2
+```
+
+One `DoProvider` with `typedResources` turns the component's schema into a generated CRD with `kubectl explain`, printer columns, and per-kind RBAC. The component code stays code; application teams get a Kubernetes object.
 
 [Start with a credential-free resource →](/guide/getting-started)

@@ -1,14 +1,17 @@
 # doplane
 
 A Kubernetes operator that manages individual cloud resources through the new
-[`pulumi do`](https://www.pulumi.com/docs/) CLI — with zero Pulumi programs,
-stacks, or state files. The desired state lives in a `DoResource` custom
-resource, the observed cloud state is written back into its `status` and
-therefore persisted in etcd.
+[`pulumi do`](https://www.pulumi.com/docs/) CLI. Pulumi runs under the hood,
+so the whole Pulumi ecosystem — every provider, plus component resources
+authored in any Pulumi language — is available as Kubernetes-native APIs,
+with no separate state backend to operate. The desired state lives in a
+`DoResource` custom resource, the observed cloud state is written back into
+its `status` and therefore persisted in etcd.
 
-**[Read the documentation](https://dirien.github.io/doplane/)** — start on a
-local kind cluster, choose an API, or load the agent-oriented Markdown
-guides through [`llms.txt`](https://dirien.github.io/doplane/llms.txt).
+**[Read the documentation](https://dirien.github.io/doplane/)** — install it
+on any Kubernetes cluster (the quickstart walks through a local kind
+cluster), choose an API, or load the agent-oriented Markdown guides through
+[`llms.txt`](https://dirien.github.io/doplane/llms.txt).
 
 ```yaml
 apiVersion: do.pulumi.com/v1alpha1

@@ -1,6 +1,6 @@
 # doplane
 
-> Kubernetes operator that reconciles Pulumi provider resources without Pulumi programs, stacks, or state files.
+> Kubernetes operator that runs Pulumi under the hood: any provider or component from the Pulumi ecosystem becomes a Kubernetes-native API, with external-resource state stored in the object status.
 
 Use the pages below as task context. Preserve the invariants and verify the success conditions stated on each page.
 
@@ -28,10 +28,10 @@ Source: https://dirien.github.io/doplane/guide/getting-started
 # Getting started
 
 <div class="agent-contract">
-  <p><strong>Agent goal:</strong> install doplane on a local kind cluster and prove that one <code>DoResource</code> reaches <code>Ready=True</code>. Stop if an existing cluster or cloud resource could be affected.</p>
+  <p><strong>Agent goal:</strong> install doplane on a Kubernetes cluster and prove that one <code>DoResource</code> reaches <code>Ready=True</code>. Stop if an existing cluster or cloud resource could be affected.</p>
 </div>
 
-This path uses the `random` provider, so it needs no cloud account and creates no billable resource.
+doplane runs on any Kubernetes cluster — managed (EKS, GKE, AKS), on-prem, or local. This walkthrough uses a disposable local [kind](https://kind.sigs.k8s.io/) cluster because it needs nothing but Docker; notes call out the one step that differs on a remote cluster. The example uses the `random` provider, so it needs no cloud account and creates no billable resource.
 
 ## Prerequisites
 
@@ -39,13 +39,12 @@ Use a machine with these tools:
 
 - Docker or another container runtime supported by the Makefile
 - Go 1.24 or later
-- `kind`
-- `kubectl`
+- `kubectl` pointing at the cluster you want to use (or `kind` to create one)
 - GNU Make
 
 The build creates two images. The manager watches Kubernetes objects; the runner image executes provider operations in short-lived Jobs.
 
-## 1. Clone and create the cluster
+## 1. Clone and pick a cluster
 
 ```sh
 git clone https://github.com/dirien/doplane.git
@@ -54,7 +53,7 @@ cd doplane
 kind create cluster --name doplane
 ```
 
-Confirm that `kubectl config current-context` prints `kind-doplane` before continuing.
+Already have a cluster? Skip `kind create cluster` — every later step works against whatever `kubectl config current-context` points at. Confirm the context is the intended cluster before continuing (`kind-doplane` if you created one here).
 
 ## 2. Build and load both images
 
@@ -65,6 +64,8 @@ make docker-build docker-build-runner \
 
 kind load docker-image doplane:dev doplane-runner:dev --name doplane
 ```
+
+On a remote cluster, replace `kind load` by pushing both images to a registry the cluster can pull from, and use those references as `IMG` and `RUNNER_IMG` in the next step.
 
 Do not replace the runner image with the manager image. The manager is distroless and contains neither `pulumi` nor provider plugins.
 
@@ -99,13 +100,13 @@ The resource has succeeded when:
 - `.status.id` contains a generated pet name;
 - `Ready=True` reports that the external resource exists;
 - `Synced=True` reports that the last provider operation succeeded;
-- a completed runner Job exists in the runner namespace.
+- a `Created` event on the object records the provider call.
 
-Inspect the full object and recent events when a condition stays false:
+Each provider operation runs in a short-lived runner Job that the manager deletes after consuming its result — so on success, no Job remains. Inspect the full object, its events, and any still-running Job when a condition stays false:
 
 ```sh
 kubectl describe doresource pet-simple
-kubectl get jobs --all-namespaces
+kubectl get jobs --all-namespaces -l app.kubernetes.io/managed-by=doplane
 ```
 
 ## 5. Make a declarative change
@@ -116,13 +117,13 @@ kubectl patch doresource pet-simple --type merge \
 kubectl get doresource pet-simple -w
 ```
 
-The `random` provider does not support every read or update operation. A terminal `UpdateNotSupported` condition is provider behavior, not proof that the control loop is broken. Use a provider resource with read and patch support when testing drift correction.
+The `random` provider does not support in-place reads or updates, so this patch ends with a terminal `Synced=False` / `UpdateNotSupported` condition. That is provider behavior, not proof that the control loop is broken — reverting the spec settles the resource again. Use a provider resource with read and patch support when testing drift correction.
 
 ## Clean up
 
 ```sh
 kubectl delete doresource pet-simple
-kind delete cluster --name doplane
+kind delete cluster --name doplane   # only if you created it above
 ```
 
 Deletion waits for the provider delete unless `spec.deletionPolicy` is `Orphan`.
@@ -272,11 +273,11 @@ The Kubernetes object is the durable record:
 - `status.engineState` stores the checkpoint for component resources.
 - `status.conditions` reports `Ready` and `Synced` independently.
 
-There is no Pulumi stack or state file to recover. Losing the custom resource or etcd state loses doplane's management record. Back up the cluster accordingly.
+doplane runs Pulumi statelessly: the Kubernetes object takes the place of a stack, so there is no separate state backend to operate — and none to recover from. Losing the custom resource or etcd state loses doplane's management record. Back up the cluster accordingly.
 
 ## Mutation durability
 
-Runner Jobs have deterministic names derived from the owner and operation input. On retry, the controller adopts an existing Job instead of repeating a cloud mutation. Completed mutation Jobs outlive controller restarts long enough for the manager to consume their result; read Jobs can expire quickly.
+Runner Jobs have deterministic names derived from the owner and operation input. On retry, the controller adopts an existing Job instead of repeating a cloud mutation. Completed mutation Jobs outlive controller restarts long enough for the manager to consume their result; read Jobs can expire quickly. Once the manager has consumed a result, it deletes the Job — a successful reconcile leaves events and status, not Jobs.
 
 Preserve these rules in code changes:
 
@@ -294,7 +295,7 @@ Schemas are cached by package. With the writable plugin cache enabled, a pinned 
 
 ## Component resources
 
-Pulumi component resources do not expose stateless CRUD. doplane generates a one-resource program inside the Job, runs an ephemeral engine against a temporary `file://` backend, and persists the exported checkpoint in `status.engineState`. Updates and deletes import that checkpoint.
+Component resources — reusable infrastructure authored in any Pulumi language — do not expose stateless CRUD. doplane generates a one-resource program inside the Job, runs an ephemeral engine against a temporary `file://` backend, and persists the exported checkpoint in `status.engineState`. Updates and deletes import that checkpoint, so the whole component ecosystem works without a standing backend.
 
 Component input secrets cannot use `spec.valuesFrom`: the engine checkpoint would persist them. Treat `engineState` as sensitive-adjacent data.
 
@@ -492,7 +493,7 @@ Capture these facts in an issue or agent handoff:
 - `Ready` and `Synced` reason/message;
 - manager and runner image references;
 - package pin and full resource type token;
-- runner Job phase and logs, with credentials redacted;
+- phase and logs of any still-present runner Job, with credentials redacted — consumed Jobs are deleted, their errors live in the condition message and events;
 - whether the operation was create, read, patch, replace, or delete.
 
 
@@ -561,13 +562,15 @@ spec:
   properties:
     length: 2
   valuesFrom:
-    - toPath: prefix
+    - toPath: keepers.rotation
       secretKeyRef:
         name: pet-naming
-        key: prefix
+        key: rotation
 ```
 
 Only a placeholder and path-to-environment mapping travel through the object and Job spec. The kubelet injects the value into the runner, which substitutes it immediately before the provider call. Progress logs and error messages redact the value.
+
+Never inject a secret into an identity-forming property (a name, prefix, or separator): the provider-assigned ID would embed the value, and doplane refuses to record it (`SecretInputInID`) — after the external resource may already have been created.
 
 The Secret must exist where the runner Job executes. `valuesFrom` is unsupported for component resources because their checkpoint would persist the input.
 
@@ -718,14 +721,17 @@ Provider profiles also expose `SchemaFetched`, `PluginReady`, and `CredentialsRe
 | `ResourceNotAllowed` | provider policy | full token and profile `allowedResources` | no |
 | `RegistryAuthMissing` | component registry | runner Secret and `PULUMI_ACCESS_TOKEN` | no |
 | `RegistryResolveFailed` | component registry | package reference, token scope, network | no |
-| plugin install failure | runner preparation | pin, cache permissions, egress, disk | no provider call |
-| `CreateFailed`, `UpdateFailed`, `ReadFailed`, or `DeleteFailed` | execution | condition message, runner Job, image pull, provider output | possibly; inspect the retained Job before retrying |
+| `PluginInstallFailed`, `PluginCacheNotWritable` | runner preparation | pin, cache permissions, egress, disk | no provider call |
+| `SecretInputMissing` | secret staging | Secret present in the runner Job's namespace, key name | no |
+| `SecretInputInID` | identity safety | secret injected into an identity-forming property (name, prefix) | yes; the external resource may exist and need manual cleanup |
+| `OperationFailed` | execution | condition message, events, provider error output | possibly; check the condition message and any still-present Job before retrying |
+| `CreateFailed`, `UpdateFailed`, `ReadFailed`, or `DeleteFailed` | execution (no typed provider code available) | condition message, events, image pull | possibly; check the condition message and any still-present Job before retrying |
 | `EngineFailed` | component engine | runner result and checkpoint handling | possibly |
 | `UpdateNotSupported` | provider capability | provider read/patch support | attempted |
 | `ReplacementRequired` | lifecycle safety | immutable inputs, protect, generation | patch attempted; replacement did not run |
 | delete blocked | dependency safety | references and `DoUsage` objects | no delete |
 
-The exact reason set evolves with controller code. Treat this table as routing guidance and the object condition message as the authoritative detail.
+When the runner reports a typed failure code, that code is the condition reason (for example `OperationFailed` for a provider error); the generic phase reasons appear when no typed code is available. The exact reason set evolves with controller code. Treat this table as routing guidance and the object condition message as the authoritative detail.
 
 ## Diagnostic sequence
 
@@ -733,11 +739,11 @@ The exact reason set evolves with controller code. Treat this table as routing g
 kubectl get doresource <name> -o jsonpath='{range .status.conditions[*]}{.type}{"="}{.status}{" reason="}{.reason}{"\n"}{.message}{"\n\n"}{end}'
 kubectl describe doresource <name>
 kubectl get jobs --all-namespaces \
-  -l do.pulumi.com/owner-name=<name> \
+  -l app.kubernetes.io/managed-by=doplane \
   --sort-by=.metadata.creationTimestamp
 ```
 
-If labels differ for the current controller version, find recent Jobs by timestamp and owner references. Read runner logs only after checking whether the Job may still be active.
+Runner Jobs are transient: the manager deletes each Job after consuming its result, and the provider's error lands in the condition message and events. A Job that still exists is either running or holds a result the manager has not consumed yet — read its logs only after checking whether it may still be active.
 
 ## Retry rules
 

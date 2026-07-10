@@ -97,5 +97,5 @@ Capture these facts in an issue or agent handoff:
 - `Ready` and `Synced` reason/message;
 - manager and runner image references;
 - package pin and full resource type token;
-- runner Job phase and logs, with credentials redacted;
+- phase and logs of any still-present runner Job, with credentials redacted — consumed Jobs are deleted, their errors live in the condition message and events;
 - whether the operation was create, read, patch, replace, or delete.

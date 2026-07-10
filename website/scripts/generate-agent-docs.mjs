@@ -18,7 +18,7 @@ const site = 'https://dirien.github.io/doplane'
 const summary = [
   '# doplane',
   '',
-  '> Kubernetes operator that reconciles Pulumi provider resources without Pulumi programs, stacks, or state files.',
+  '> Kubernetes operator that runs Pulumi under the hood: any provider or component from the Pulumi ecosystem becomes a Kubernetes-native API, with external-resource state stored in the object status.',
   '',
   'Use the pages below as task context. Preserve the invariants and verify the success conditions stated on each page.',
   '',

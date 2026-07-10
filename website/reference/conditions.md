@@ -29,14 +29,17 @@ Provider profiles also expose `SchemaFetched`, `PluginReady`, and `CredentialsRe
 | `ResourceNotAllowed` | provider policy | full token and profile `allowedResources` | no |
 | `RegistryAuthMissing` | component registry | runner Secret and `PULUMI_ACCESS_TOKEN` | no |
 | `RegistryResolveFailed` | component registry | package reference, token scope, network | no |
-| plugin install failure | runner preparation | pin, cache permissions, egress, disk | no provider call |
-| `CreateFailed`, `UpdateFailed`, `ReadFailed`, or `DeleteFailed` | execution | condition message, runner Job, image pull, provider output | possibly; inspect the retained Job before retrying |
+| `PluginInstallFailed`, `PluginCacheNotWritable` | runner preparation | pin, cache permissions, egress, disk | no provider call |
+| `SecretInputMissing` | secret staging | Secret present in the runner Job's namespace, key name | no |
+| `SecretInputInID` | identity safety | secret injected into an identity-forming property (name, prefix) | yes; the external resource may exist and need manual cleanup |
+| `OperationFailed` | execution | condition message, events, provider error output | possibly; check the condition message and any still-present Job before retrying |
+| `CreateFailed`, `UpdateFailed`, `ReadFailed`, or `DeleteFailed` | execution (no typed provider code available) | condition message, events, image pull | possibly; check the condition message and any still-present Job before retrying |
 | `EngineFailed` | component engine | runner result and checkpoint handling | possibly |
 | `UpdateNotSupported` | provider capability | provider read/patch support | attempted |
 | `ReplacementRequired` | lifecycle safety | immutable inputs, protect, generation | patch attempted; replacement did not run |
 | delete blocked | dependency safety | references and `DoUsage` objects | no delete |
 
-The exact reason set evolves with controller code. Treat this table as routing guidance and the object condition message as the authoritative detail.
+When the runner reports a typed failure code, that code is the condition reason (for example `OperationFailed` for a provider error); the generic phase reasons appear when no typed code is available. The exact reason set evolves with controller code. Treat this table as routing guidance and the object condition message as the authoritative detail.
 
 ## Diagnostic sequence
 
@@ -44,11 +47,11 @@ The exact reason set evolves with controller code. Treat this table as routing g
 kubectl get doresource <name> -o jsonpath='{range .status.conditions[*]}{.type}{"="}{.status}{" reason="}{.reason}{"\n"}{.message}{"\n\n"}{end}'
 kubectl describe doresource <name>
 kubectl get jobs --all-namespaces \
-  -l do.pulumi.com/owner-name=<name> \
+  -l app.kubernetes.io/managed-by=doplane \
   --sort-by=.metadata.creationTimestamp
 ```
 
-If labels differ for the current controller version, find recent Jobs by timestamp and owner references. Read runner logs only after checking whether the Job may still be active.
+Runner Jobs are transient: the manager deletes each Job after consuming its result, and the provider's error lands in the condition message and events. A Job that still exists is either running or holds a result the manager has not consumed yet — read its logs only after checking whether it may still be active.
 
 ## Retry rules
 

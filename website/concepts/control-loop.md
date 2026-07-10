@@ -41,11 +41,11 @@ The Kubernetes object is the durable record:
 - `status.engineState` stores the checkpoint for component resources.
 - `status.conditions` reports `Ready` and `Synced` independently.
 
-There is no Pulumi stack or state file to recover. Losing the custom resource or etcd state loses doplane's management record. Back up the cluster accordingly.
+doplane runs Pulumi statelessly: the Kubernetes object takes the place of a stack, so there is no separate state backend to operate — and none to recover from. Losing the custom resource or etcd state loses doplane's management record. Back up the cluster accordingly.
 
 ## Mutation durability
 
-Runner Jobs have deterministic names derived from the owner and operation input. On retry, the controller adopts an existing Job instead of repeating a cloud mutation. Completed mutation Jobs outlive controller restarts long enough for the manager to consume their result; read Jobs can expire quickly.
+Runner Jobs have deterministic names derived from the owner and operation input. On retry, the controller adopts an existing Job instead of repeating a cloud mutation. Completed mutation Jobs outlive controller restarts long enough for the manager to consume their result; read Jobs can expire quickly. Once the manager has consumed a result, it deletes the Job — a successful reconcile leaves events and status, not Jobs.
 
 Preserve these rules in code changes:
 
@@ -63,6 +63,6 @@ Schemas are cached by package. With the writable plugin cache enabled, a pinned 
 
 ## Component resources
 
-Pulumi component resources do not expose stateless CRUD. doplane generates a one-resource program inside the Job, runs an ephemeral engine against a temporary `file://` backend, and persists the exported checkpoint in `status.engineState`. Updates and deletes import that checkpoint.
+Component resources — reusable infrastructure authored in any Pulumi language — do not expose stateless CRUD. doplane generates a one-resource program inside the Job, runs an ephemeral engine against a temporary `file://` backend, and persists the exported checkpoint in `status.engineState`. Updates and deletes import that checkpoint, so the whole component ecosystem works without a standing backend.
 
 Component input secrets cannot use `spec.valuesFrom`: the engine checkpoint would persist them. Treat `engineState` as sensitive-adjacent data.
