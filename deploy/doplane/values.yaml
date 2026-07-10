@@ -29,6 +29,14 @@ runnerImage:
   # re-pushed fix is not masked by a node's cached image layer.
   pullPolicy: ""
 
+# -- Additional API groups DoCompositeDefinitions may serve typed platform
+# APIs in (spec.api.group), e.g. ["platform.acme.com"]. Rendered into both
+# the manager's --composite-api-groups allowlist and the matching RBAC
+# rules, so adding a group stays a deliberate install-time decision and
+# manager RBAC stays enumerable. The fixed typed.do.pulumi.com group is
+# always allowed.
+compositeApiGroups: []
+
 # -- Namespaces the operator reconciles (namespace-scoped deployment).
 # Empty watches the whole cluster. When set, manager RBAC shrinks to
 # per-namespace Roles in these namespaces (plus the release namespace for

@@ -55,9 +55,9 @@ func renderComposite(comp *dov1alpha1.DoComposite, def *dov1alpha1.DoCompositeDe
 	if err != nil {
 		return nil, fmt.Errorf("spec.parameters is not a JSON object: %w", err)
 	}
-	for _, required := range def.Spec.RequiredParameters {
-		if _, ok := params[required]; !ok {
-			return nil, fmt.Errorf("required parameter %q is missing", required)
+	if def.Spec.API != nil {
+		if err := validateParameters(def.Spec.API.ParametersSchema, params); err != nil {
+			return nil, err
 		}
 	}
 
@@ -125,7 +125,32 @@ func renderChild(rc *renderContext, tpl *dov1alpha1.CompositeResourceTemplate) (
 			References:     refs,
 		},
 	}
+	if tpl.ExternalName != "" {
+		name, err := renderExternalName(rc, tpl.ExternalName)
+		if err != nil {
+			return nil, err
+		}
+		if name != "" {
+			child.Annotations = map[string]string{annExternalName: name}
+		}
+	}
 	return child, nil
+}
+
+// renderExternalName renders a template's externalName into the adopt
+// annotation value. Sibling resources.* expressions are rejected: the
+// annotation is read before any reference could resolve, so a reference
+// there could never mean adoption of the right resource.
+func renderExternalName(rc *renderContext, expr string) (string, error) {
+	var refs []dov1alpha1.Reference
+	rendered, err := renderString(rc, expr, "externalName", &refs)
+	if err != nil {
+		return "", err
+	}
+	if len(refs) > 0 || rendered == removedValue {
+		return "", fmt.Errorf("externalName must not reference sibling resources (only params.* and self.*)")
+	}
+	return pulumido.RenderScalar(rendered), nil
 }
 
 // renderValue walks a JSON value, resolving expressions in strings. Strings

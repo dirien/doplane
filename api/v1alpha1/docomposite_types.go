@@ -33,27 +33,39 @@ import (
 // A resources.* expression compiles into a DoResource reference, so
 // ordering, readiness gating, propagation and ordered teardown are handled
 // by the resource graph engine. "$${" escapes a literal "${".
+//
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.api) || has(self.api)",message="spec.api cannot be removed once set; delete the definition instead"
 type DoCompositeDefinitionSpec struct {
-	// RequiredParameters lists parameter keys every DoComposite using this
-	// definition must provide.
-	// +optional
-	RequiredParameters []string `json:"requiredParameters,omitempty"`
-
 	// Resources are the templates rendered into DoResources.
 	// +kubebuilder:validation:MinItems=1
 	Resources []CompositeResourceTemplate `json:"resources"`
 
 	// API exposes this definition as its own typed, namespaced CRD (e.g.
-	// `kind: StaticSite`): users apply the platform kind with their
-	// parameters as spec, instead of a generic DoComposite. Each typed
-	// object is translated into an owned DoComposite.
+	// `kind: Website` in `platform.acme.com`): users apply the platform
+	// kind with their parameters as spec, instead of a generic DoComposite.
+	// Each typed object is translated into an owned DoComposite.
 	// +optional
 	API *CompositeAPI `json:"api,omitempty"`
 }
 
 // CompositeAPI describes the typed CRD generated for a definition.
+// Group, kind and plural are immutable once set: a rename would strand the
+// typed objects behind the old API, so a breaking change ships as a new
+// definition and manifests migrate at the leaf.
+//
+// +kubebuilder:validation:XValidation:rule="self.kind == oldSelf.kind",message="spec.api.kind is immutable"
+// +kubebuilder:validation:XValidation:rule="has(self.plural) == has(oldSelf.plural) && (!has(self.plural) || self.plural == oldSelf.plural)",message="spec.api.plural is immutable"
+// +kubebuilder:validation:XValidation:rule="has(self.group) == has(oldSelf.group) && (!has(self.group) || self.group == oldSelf.group)",message="spec.api.group is immutable"
 type CompositeAPI struct {
-	// Kind of the generated API (e.g. StaticSite).
+	// Group of the generated API (e.g. platform.acme.com). Must be on the
+	// operator's install-time allowlist (Helm value compositeApiGroups),
+	// which also renders the matching manager RBAC. Empty uses the fixed
+	// typed.do.pulumi.com group.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+$`
+	// +optional
+	Group string `json:"group,omitempty"`
+
+	// Kind of the generated API (e.g. Website).
 	// +kubebuilder:validation:Pattern=`^[A-Z][A-Za-z0-9]*$`
 	Kind string `json:"kind"`
 
@@ -61,12 +73,31 @@ type CompositeAPI struct {
 	// +optional
 	Plural string `json:"plural,omitempty"`
 
-	// ParametersSchema is an OpenAPI v3 schema (JSONSchemaProps) validating
-	// the typed object's spec — the composite parameters. Empty accepts
-	// any object.
+	// Version served and referenced by the templates (storage version).
+	// Defaults to v1alpha1. Bumping it keeps prior versions only if they
+	// are listed in deprecatedVersions; generated CRDs use conversion
+	// strategy None, so every served version must stay round-trippable —
+	// a new required parameter is a new API, not a new version.
+	// +kubebuilder:validation:Pattern=`^v[0-9]+((alpha|beta)[0-9]+)?$`
 	// +optional
+	Version string `json:"version,omitempty"`
+
+	// DeprecatedVersions are previously served versions kept served (and
+	// marked deprecated) while their objects migrate. Remove a version
+	// only when the definition's status reports zero objects for it.
+	// +optional
+	// +listType=set
+	DeprecatedVersions []string `json:"deprecatedVersions,omitempty"`
+
+	// ParametersSchema is the OpenAPI v3 schema validating the typed
+	// object's spec — the single source of the parameter contract. It also
+	// validates DoComposite parameters at render time and template
+	// ${params.*} usage at apply time. Empty accepts any object. The
+	// property name "doplane" is reserved for doplane's lifecycle knobs.
+	// +optional
+	// +kubebuilder:validation:Schemaless
 	// +kubebuilder:pruning:PreserveUnknownFields
-	ParametersSchema *apiextensionsv1.JSON `json:"parametersSchema,omitempty"`
+	ParametersSchema *apiextensionsv1.JSONSchemaProps `json:"parametersSchema,omitempty"`
 }
 
 // CompositeResourceTemplate templates one DoResource of a composite.
@@ -99,6 +130,24 @@ type CompositeResourceTemplate struct {
 	// +optional
 	// +kubebuilder:pruning:PreserveUnknownFields
 	Properties *apiextensionsv1.JSON `json:"properties,omitempty"`
+
+	// ExternalName adopts an existing external resource instead of creating
+	// one: rendered (params/self expressions allowed; sibling resources.*
+	// are not) into the child's crossplane.io/external-name annotation.
+	// +optional
+	ExternalName string `json:"externalName,omitempty"`
+}
+
+// TypedAPIVersionStatus reports one served version of a definition's API.
+type TypedAPIVersionStatus struct {
+	// Name of the version (e.g. v1alpha1).
+	Name string `json:"name"`
+	// Deprecated marks a version served only for migration.
+	// +optional
+	Deprecated bool `json:"deprecated,omitempty"`
+	// Objects counts typed objects whose manifests last wrote this
+	// version. A deprecated version may be removed once this reaches zero.
+	Objects int32 `json:"objects"`
 }
 
 // DoCompositeDefinitionStatus reports observed state of a definition.
@@ -107,12 +156,23 @@ type DoCompositeDefinitionStatus struct {
 	// definition.
 	// +optional
 	Composites int32 `json:"composites,omitempty"`
+
+	// APIVersions reports each served version of the typed API and how
+	// many objects still use it (the migration signal for version bumps).
+	// +optional
+	APIVersions []TypedAPIVersionStatus `json:"apiVersions,omitempty"`
+
+	// Conditions (APIServed).
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=docd
 // +kubebuilder:printcolumn:name="COMPOSITES",type=integer,JSONPath=`.status.composites`
+// +kubebuilder:printcolumn:name="SERVED",type=string,JSONPath=`.status.conditions[?(@.type=='APIServed')].status`
+// +kubebuilder:printcolumn:name="REASON",type=string,JSONPath=`.status.conditions[?(@.type=='APIServed')].reason`
 // +kubebuilder:printcolumn:name="AGE",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // DoCompositeDefinition is a cluster-scoped, platform-team-owned template

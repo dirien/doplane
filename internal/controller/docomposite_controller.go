@@ -260,6 +260,14 @@ func (r *DoCompositeReconciler) applyChild(ctx context.Context, comp *dov1alpha1
 		for k, v := range desired.Labels {
 			child.Labels[k] = v
 		}
+		// Merge, never replace: the child self-persists its external-name
+		// annotation after create, which a wholesale overwrite would drop.
+		for k, v := range desired.Annotations {
+			if child.Annotations == nil {
+				child.Annotations = map[string]string{}
+			}
+			child.Annotations[k] = v
+		}
 		child.Spec = desired.Spec
 		return controllerutil.SetControllerReference(comp, child, r.Scheme)
 	})

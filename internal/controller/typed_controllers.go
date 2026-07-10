@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -41,44 +42,65 @@ import (
 	dov1alpha1 "github.com/dirien/doplane/api/v1alpha1"
 )
 
-// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;create;update
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;create;update;delete
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions/status,verbs=update
 // +kubebuilder:rbac:groups=typed.do.pulumi.com,resources=*,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=typed.do.pulumi.com,resources=*/status,verbs=get;update;patch
 
+// errCRDConflict marks a registration colliding with a CRD another source
+// (or another operator) owns — terminal until a spec changes.
+var errCRDConflict = errors.New("typed API conflict")
+
+// errStoredVersionInUse marks a version drop while objects of that version
+// still exist — it heals as objects migrate, so callers requeue.
+var errStoredVersionInUse = errors.New("stored version still in use")
+
+// typedRegistration is the live controller serving one generated CRD.
+type typedRegistration struct {
+	owner string
+	gvk   schema.GroupVersionKind
+	rec   reconcile.Reconciler
+	gen   int
+}
+
 // TypedRegistrar applies generated CRDs and starts one dynamic controller
 // per typed kind at runtime (the manager accepts runnables after Start).
-// Registrations are idempotent per owner — re-registering the same source
-// re-applies the CRD; a *different* source claiming an already-served
-// plural is rejected, so colliding kinds fail fast instead of silently
-// reconciling against the wrong backing resource.
+// Ownership is persisted on the CRD itself (managed-by label + owner
+// annotation) and checked before any apply, so a *different* source
+// claiming an already-served CRD is rejected deterministically — including
+// after a manager restart — instead of silently reconciling against the
+// wrong backing resource.
 type TypedRegistrar struct {
 	Manager ctrl.Manager
 
 	mu sync.Mutex
-	// owners maps a served plural to the identity that registered it
-	// ("resource:<token>" / "composite:<definition>"); started marks
-	// plurals whose controller is already running.
-	owners  map[string]string
-	started map[string]bool
+	// registrations maps a CRD name to its serving controller. A superseded
+	// registration (version bump, definition recreated) keeps its goroutines
+	// but is fenced off via isCurrent and loses its typed-kind informer.
+	registrations map[string]*typedRegistration
+	// gens counts registrations per CRD name so replacement controllers get
+	// unique names.
+	gens map[string]int
 }
 
-// claim records ownership of a plural, rejecting a second owner.
-func (reg *TypedRegistrar) claim(plural, owner string) error {
+// isCurrent reports whether rec is still the serving reconciler for the
+// CRD. Superseded controllers cannot be stopped, so their reconcilers fence
+// themselves out with this check instead of fighting the replacement.
+func (reg *TypedRegistrar) isCurrent(crdName string, rec reconcile.Reconciler) bool {
+	if reg == nil {
+		return true
+	}
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
-	if existing, ok := reg.owners[plural]; ok && existing != owner {
-		return fmt.Errorf("typed API %q is already served for %s; rename the kind (or set spec.api.plural) to avoid the collision",
-			plural+"."+typedGroup, existing)
-	}
-	if reg.owners == nil {
-		reg.owners = map[string]string{}
-	}
-	reg.owners[plural] = owner
-	return nil
+	entry, ok := reg.registrations[crdName]
+	return ok && entry.rec == rec
 }
 
-// applyCRD creates or updates a generated CRD in place.
+// applyCRD creates or updates a generated CRD after verifying ownership:
+// an existing CRD must carry doplane's managed-by label and either no owner
+// annotation (pre-annotation releases are adopted) or the same owner.
 func (reg *TypedRegistrar) applyCRD(ctx context.Context, crd *apiextensionsv1.CustomResourceDefinition) error {
+	owner := crd.Annotations[annTypedOwner]
 	c := reg.Manager.GetClient()
 	if err := c.Create(ctx, crd); err != nil {
 		if !apierrors.IsAlreadyExists(err) {
@@ -88,7 +110,14 @@ func (reg *TypedRegistrar) applyCRD(ctx context.Context, crd *apiextensionsv1.Cu
 		if err := reg.Manager.GetAPIReader().Get(ctx, types.NamespacedName{Name: crd.Name}, existing); err != nil {
 			return err
 		}
+		if err := checkCRDOwnership(existing, owner); err != nil {
+			return err
+		}
 		existing.Spec = crd.Spec
+		if existing.Annotations == nil {
+			existing.Annotations = map[string]string{}
+		}
+		existing.Annotations[annTypedOwner] = owner
 		if err := c.Update(ctx, existing); err != nil {
 			return fmt.Errorf("updating CRD %s: %w", crd.Name, err)
 		}
@@ -96,26 +125,91 @@ func (reg *TypedRegistrar) applyCRD(ctx context.Context, crd *apiextensionsv1.Cu
 	return nil
 }
 
+// checkCRDOwnership rejects applying over a CRD doplane does not own.
+func checkCRDOwnership(existing *apiextensionsv1.CustomResourceDefinition, owner string) error {
+	if existing.Labels[labelManagedByKey] != "doplane" {
+		return fmt.Errorf("%w: CRD %s exists but is not managed by doplane; refusing to overwrite it", errCRDConflict, existing.Name)
+	}
+	if got := existing.Annotations[annTypedOwner]; got != "" && got != owner {
+		return fmt.Errorf("%w: typed API %s is already served for %s; rename the kind (or set spec.api.plural/group) to avoid the collision",
+			errCRDConflict, existing.Name, got)
+	}
+	return nil
+}
+
+// prepareVersionDrop enforces status.storedVersions hygiene before a CRD
+// update that removes versions: with objects still stored the drop is
+// refused (errStoredVersionInUse); at zero objects the stale storedVersions
+// entries are pruned so the apiserver accepts the spec update. Safe because
+// generated CRDs use conversion None with round-trippable schemas — there
+// is nothing to migrate, only bookkeeping to clean.
+func (reg *TypedRegistrar) prepareVersionDrop(ctx context.Context, desired *apiextensionsv1.CustomResourceDefinition) error {
+	existing := &apiextensionsv1.CustomResourceDefinition{}
+	if err := reg.Manager.GetAPIReader().Get(ctx, types.NamespacedName{Name: desired.Name}, existing); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	kept := map[string]bool{}
+	for _, v := range desired.Spec.Versions {
+		kept[v.Name] = true
+	}
+	var dropped []string
+	remaining := existing.Status.StoredVersions[:0:0]
+	for _, v := range existing.Status.StoredVersions {
+		if kept[v] {
+			remaining = append(remaining, v)
+		} else {
+			dropped = append(dropped, v)
+		}
+	}
+	if len(dropped) == 0 {
+		return nil
+	}
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(storageGVK(existing).GroupVersion().WithKind(existing.Spec.Names.ListKind))
+	if err := reg.Manager.GetAPIReader().List(ctx, list); err != nil {
+		return fmt.Errorf("listing %s objects before dropping versions %v: %w", existing.Spec.Names.Kind, dropped, err)
+	}
+	if n := len(list.Items); n > 0 {
+		return fmt.Errorf("%w: cannot drop version(s) %v of %s while %d objects exist; keep them in deprecatedVersions until the status reports zero",
+			errStoredVersionInUse, dropped, existing.Name, n)
+	}
+	existing.Status.StoredVersions = remaining
+	if err := reg.Manager.GetClient().Status().Update(ctx, existing); err != nil {
+		return fmt.Errorf("pruning storedVersions of %s: %w", existing.Name, err)
+	}
+	return nil
+}
+
+// storageGVK returns the GVK of a CRD's storage version.
+func storageGVK(crd *apiextensionsv1.CustomResourceDefinition) schema.GroupVersionKind {
+	version := crd.Spec.Versions[0].Name
+	for _, v := range crd.Spec.Versions {
+		if v.Storage {
+			version = v.Name
+		}
+	}
+	return schema.GroupVersionKind{Group: crd.Spec.Group, Version: version, Kind: crd.Spec.Names.Kind}
+}
+
 // EnsureResourceAPI applies the typed CRD for a provider token and starts
 // its translation controller.
 func (reg *TypedRegistrar) EnsureResourceAPI(ctx context.Context, crd *apiextensionsv1.CustomResourceDefinition,
 	token, providerName string,
 ) error {
-	if err := reg.claim(crd.Spec.Names.Plural, "resource:"+token); err != nil {
-		return err
-	}
 	if err := reg.applyCRD(ctx, crd); err != nil {
 		return err
 	}
-	gvk := schema.GroupVersionKind{Group: typedGroup, Version: typedVersion, Kind: crd.Spec.Names.Kind}
+	gvk := storageGVK(crd)
 	rec := &TypedResourceReconciler{
 		Client:       reg.Manager.GetClient(),
 		Scheme:       reg.Manager.GetScheme(),
+		Registrar:    reg,
+		CRDName:      crd.Name,
 		GVK:          gvk,
 		Token:        token,
 		ProviderName: providerName,
 	}
-	return reg.startController("typed-"+crd.Spec.Names.Plural, gvk, rec, &dov1alpha1.DoResource{})
+	return reg.startController(crd.Name, crd.Annotations[annTypedOwner], gvk, rec, &dov1alpha1.DoResource{})
 }
 
 // EnsureCompositeAPI applies the typed CRD for a definition's platform API
@@ -123,31 +217,70 @@ func (reg *TypedRegistrar) EnsureResourceAPI(ctx context.Context, crd *apiextens
 func (reg *TypedRegistrar) EnsureCompositeAPI(ctx context.Context, crd *apiextensionsv1.CustomResourceDefinition,
 	definition string,
 ) error {
-	if err := reg.claim(crd.Spec.Names.Plural, "composite:"+definition); err != nil {
+	if err := reg.prepareVersionDrop(ctx, crd); err != nil {
 		return err
 	}
 	if err := reg.applyCRD(ctx, crd); err != nil {
 		return err
 	}
-	gvk := schema.GroupVersionKind{Group: typedGroup, Version: typedVersion, Kind: crd.Spec.Names.Kind}
+	gvk := storageGVK(crd)
 	rec := &TypedCompositeReconciler{
 		Client:     reg.Manager.GetClient(),
 		Scheme:     reg.Manager.GetScheme(),
+		Registrar:  reg,
+		CRDName:    crd.Name,
 		GVK:        gvk,
 		Definition: definition,
 	}
-	return reg.startController("typed-"+crd.Spec.Names.Plural, gvk, rec, &dov1alpha1.DoComposite{})
+	return reg.startController(crd.Name, crd.Annotations[annTypedOwner], gvk, rec, &dov1alpha1.DoComposite{})
+}
+
+// Forget drops the registration of a deleted CRD: the typed-kind informer
+// is removed (its relist would error forever against a deleted API) and the
+// entry is cleared so a future definition can re-serve the kinds. The old
+// controller keeps running fenced-off — controllers cannot be stopped
+// individually, and one idle goroutine set per teardown is a bounded leak.
+func (reg *TypedRegistrar) Forget(ctx context.Context, crdName string) {
+	reg.mu.Lock()
+	entry, ok := reg.registrations[crdName]
+	if ok {
+		delete(reg.registrations, crdName)
+	}
+	reg.mu.Unlock()
+	if ok {
+		reg.removeInformer(ctx, entry.gvk)
+	}
+}
+
+func (reg *TypedRegistrar) removeInformer(ctx context.Context, gvk schema.GroupVersionKind) {
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(gvk)
+	_ = reg.Manager.GetCache().RemoveInformer(ctx, obj)
 }
 
 // startController wires a dynamic controller for gvk: reconcile on typed
-// object events plus on changes of the owned mirror object.
-func (reg *TypedRegistrar) startController(name string, gvk schema.GroupVersionKind,
+// object events plus on changes of the owned mirror object. A registration
+// whose owner or GVK changed (definition recreated, version bumped) is
+// superseded: the old typed-kind informer is removed and a replacement
+// controller takes over; the old reconciler fences itself via isCurrent.
+func (reg *TypedRegistrar) startController(crdName, owner string, gvk schema.GroupVersionKind,
 	rec reconcile.Reconciler, owned client.Object,
 ) error {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
-	if reg.started[name] {
-		return nil
+	if existing, ok := reg.registrations[crdName]; ok {
+		if existing.owner == owner && existing.gvk == gvk {
+			return nil
+		}
+		reg.removeInformer(context.Background(), existing.gvk)
+	}
+	if reg.gens == nil {
+		reg.gens = map[string]int{}
+	}
+	reg.gens[crdName]++
+	name := "typed-" + crdName
+	if gen := reg.gens[crdName]; gen > 1 {
+		name = fmt.Sprintf("%s-r%d", name, gen)
 	}
 	c, err := controller.New(name, reg.Manager, controller.Options{Reconciler: rec})
 	if err != nil {
@@ -162,10 +295,10 @@ func (reg *TypedRegistrar) startController(name string, gvk schema.GroupVersionK
 		handler.EnqueueRequestForOwner(reg.Manager.GetScheme(), reg.Manager.GetRESTMapper(), obj, handler.OnlyControllerOwner()))); err != nil {
 		return err
 	}
-	if reg.started == nil {
-		reg.started = map[string]bool{}
+	if reg.registrations == nil {
+		reg.registrations = map[string]*typedRegistration{}
 	}
-	reg.started[name] = true
+	reg.registrations[crdName] = &typedRegistration{owner: owner, gvk: gvk, rec: rec, gen: reg.gens[crdName]}
 	return nil
 }
 
@@ -175,7 +308,10 @@ func (reg *TypedRegistrar) startController(name string, gvk schema.GroupVersionK
 // cloud resource), and the mirror's status is copied back.
 type TypedResourceReconciler struct {
 	client.Client
-	Scheme       *runtime.Scheme
+	Scheme *runtime.Scheme
+	// Registrar fences superseded controllers (nil in tests: always current).
+	Registrar    *TypedRegistrar
+	CRDName      string
 	GVK          schema.GroupVersionKind
 	Token        string
 	ProviderName string
@@ -183,6 +319,9 @@ type TypedResourceReconciler struct {
 
 // Reconcile mirrors one typed object.
 func (r *TypedResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	if !r.Registrar.isCurrent(r.CRDName, r) {
+		return ctrl.Result{}, nil
+	}
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(r.GVK)
 	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
@@ -305,17 +444,25 @@ func sameJSON(a, b any) bool {
 }
 
 // TypedCompositeReconciler translates one generated platform-API kind
-// (e.g. StaticSite) into DoComposites: the typed object's spec becomes the
-// composite's parameters and the roll-up status is copied back.
+// (e.g. Website) into DoComposites: the typed object's spec becomes the
+// composite's parameters — except the reserved spec.doplane block, which
+// maps to the composite's lifecycle knobs — and the roll-up status is
+// copied back.
 type TypedCompositeReconciler struct {
 	client.Client
-	Scheme     *runtime.Scheme
+	Scheme *runtime.Scheme
+	// Registrar fences superseded controllers (nil in tests: always current).
+	Registrar  *TypedRegistrar
+	CRDName    string
 	GVK        schema.GroupVersionKind
 	Definition string
 }
 
 // Reconcile mirrors one typed composite object.
 func (r *TypedCompositeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	if !r.Registrar.isCurrent(r.CRDName, r) {
+		return ctrl.Result{}, nil
+	}
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(r.GVK)
 	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
@@ -329,6 +476,7 @@ func (r *TypedCompositeReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("spec: %w", err)
 	}
+	updatePolicy, revisionRef := popDoplaneBlock(params)
 	raw, err := json.Marshal(params)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -340,6 +488,8 @@ func (r *TypedCompositeReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 		mirror.Spec.Definition = r.Definition
 		mirror.Spec.Parameters = &apiextensionsv1.JSON{Raw: raw}
+		mirror.Spec.UpdatePolicy = updatePolicy
+		mirror.Spec.RevisionRef = revisionRef
 		return controllerutil.SetControllerReference(obj, mirror, r.Scheme)
 	}); err != nil {
 		return ctrl.Result{}, err
@@ -351,6 +501,25 @@ func (r *TypedCompositeReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		"revision":       mirror.Status.Revision,
 		"conditions":     mirror.Status.Conditions,
 	})
+}
+
+// popDoplaneBlock removes the reserved doplane block from a typed spec and
+// returns the lifecycle knobs it carries. Unknown or mistyped entries are
+// ignored — the generated schema already validated the block at admission.
+func popDoplaneBlock(params map[string]any) (dov1alpha1.UpdatePolicy, *dov1alpha1.RevisionReference) {
+	block, _ := params[doplaneReservedProperty].(map[string]any)
+	delete(params, doplaneReservedProperty)
+	var policy dov1alpha1.UpdatePolicy
+	if s, _ := block["updatePolicy"].(string); s != "" {
+		policy = dov1alpha1.UpdatePolicy(s)
+	}
+	var revisionRef *dov1alpha1.RevisionReference
+	if ref, _ := block["revisionRef"].(map[string]any); ref != nil {
+		if name, _ := ref["name"].(string); name != "" {
+			revisionRef = &dov1alpha1.RevisionReference{Name: name}
+		}
+	}
+	return policy, revisionRef
 }
 
 // toUnstructuredValue converts typed values (conditions, JSON blobs) into

@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -53,25 +54,34 @@ func TestPluralize(t *testing.T) {
 	}
 }
 
-func TestTypedRegistrarClaim(t *testing.T) {
-	reg := &TypedRegistrar{}
-	if err := reg.claim("buckets", "resource:aws:s3/bucket:Bucket"); err != nil {
-		t.Fatalf("first claim must succeed: %v", err)
+func TestCheckCRDOwnership(t *testing.T) {
+	crd := func(labels, annotations map[string]string) *apiextensionsv1.CustomResourceDefinition {
+		return &apiextensionsv1.CustomResourceDefinition{ObjectMeta: metav1.ObjectMeta{
+			Name: "buckets.typed.do.pulumi.com", Labels: labels, Annotations: annotations,
+		}}
 	}
-	if err := reg.claim("buckets", "resource:aws:s3/bucket:Bucket"); err != nil {
-		t.Fatalf("re-claim by the same owner must succeed: %v", err)
+	ours := map[string]string{labelManagedByKey: "doplane"}
+	if err := checkCRDOwnership(crd(ours, map[string]string{annTypedOwner: "resource:aws:s3/bucket:Bucket"}),
+		"resource:aws:s3/bucket:Bucket"); err != nil {
+		t.Fatalf("same owner must pass: %v", err)
 	}
-	err := reg.claim("buckets", "resource:gcp:storage/bucket:Bucket")
-	if err == nil {
-		t.Fatal("a different owner claiming the same plural must be rejected")
+	if err := checkCRDOwnership(crd(ours, nil), "resource:aws:s3/bucket:Bucket"); err != nil {
+		t.Fatalf("doplane-managed CRD without owner annotation (pre-annotation release) must be adopted: %v", err)
 	}
-	if got := err.Error(); !contains(got, "aws:s3/bucket:Bucket") {
-		t.Errorf("error must name the existing owner: %v", err)
+	err := checkCRDOwnership(crd(ours, map[string]string{annTypedOwner: "resource:aws:s3/bucket:Bucket"}),
+		"composite:site-def")
+	if err == nil || !contains(err.Error(), "aws:s3/bucket:Bucket") {
+		t.Fatalf("a different owner must be rejected, naming the current one: %v", err)
 	}
-	if err := reg.claim("staticsites", "composite:site-def"); err != nil {
-		t.Fatalf("unrelated plurals stay claimable: %v", err)
+	if !errorsIsCRDConflict(err) {
+		t.Fatalf("collision must be errCRDConflict: %v", err)
+	}
+	if err := checkCRDOwnership(crd(nil, nil), "composite:site-def"); err == nil {
+		t.Fatal("a foreign (unlabelled) CRD must never be overwritten")
 	}
 }
+
+func errorsIsCRDConflict(err error) bool { return errors.Is(err, errCRDConflict) }
 
 func contains(s, sub string) bool { return strings.Contains(s, sub) }
 
@@ -315,7 +325,13 @@ var _ = Describe("Typed managed resources and composite APIs", func() {
 		typed.SetGroupVersionKind(gvk)
 		typed.SetNamespace("default")
 		typed.SetName("my-site")
-		Expect(unstructured.SetNestedMap(typed.Object, map[string]any{"team": "docs"}, "spec")).To(Succeed())
+		Expect(unstructured.SetNestedMap(typed.Object, map[string]any{
+			"team": "docs",
+			"doplane": map[string]any{
+				"updatePolicy": "Manual",
+				"revisionRef":  map[string]any{"name": "site-def-v2"},
+			},
+		}, "spec")).To(Succeed())
 		Eventually(func() error {
 			return k8sClient.Create(ctx, typed)
 		}, 10*time.Second, 200*time.Millisecond).Should(Succeed())
@@ -330,6 +346,11 @@ var _ = Describe("Typed managed resources and composite APIs", func() {
 		Expect(k8sClient.Get(ctx, key, mirror)).To(Succeed())
 		Expect(mirror.Spec.Definition).To(Equal("site-def"))
 		Expect(string(mirror.Spec.Parameters.Raw)).To(ContainSubstring(`"team":"docs"`))
+		// The reserved doplane block maps to lifecycle knobs, not parameters.
+		Expect(string(mirror.Spec.Parameters.Raw)).NotTo(ContainSubstring("doplane"))
+		Expect(mirror.Spec.UpdatePolicy).To(Equal(dov1alpha1.UpdateManual))
+		Expect(mirror.Spec.RevisionRef).NotTo(BeNil())
+		Expect(mirror.Spec.RevisionRef.Name).To(Equal("site-def-v2"))
 		Expect(metav1.GetControllerOf(mirror)).NotTo(BeNil())
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, mirror) })
 

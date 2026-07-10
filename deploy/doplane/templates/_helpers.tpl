@@ -162,8 +162,9 @@ ClusterRole (cluster-wide install) or into a Role per watched namespace
     - get
     - list
     - watch
+{{- range prepend .Values.compositeApiGroups "typed.do.pulumi.com" | uniq }}
 - apiGroups:
-    - typed.do.pulumi.com
+    - {{ . }}
   resources:
     - '*'
   verbs:
@@ -173,13 +174,14 @@ ClusterRole (cluster-wide install) or into a Role per watched namespace
     - update
     - patch
 - apiGroups:
-    - typed.do.pulumi.com
+    - {{ . }}
   resources:
     - '*/status'
   verbs:
     - get
     - update
     - patch
+{{- end }}
 - apiGroups:
     - do.pulumi.com
   resources:
@@ -215,6 +217,13 @@ required in both install shapes.
     - get
     - create
     - update
+    - delete
+- apiGroups:
+    - apiextensions.k8s.io
+  resources:
+    - customresourcedefinitions/status
+  verbs:
+    - update
 - apiGroups:
     - do.pulumi.com
   resources:
@@ -229,6 +238,21 @@ required in both install shapes.
     - do.pulumi.com
   resources:
     - docompositedefinitions
+  verbs:
+    - get
+    - list
+    - watch
+    - update
+    - patch
+- apiGroups:
+    - do.pulumi.com
+  resources:
+    - docompositedefinitions/finalizers
+  verbs:
+    - update
+- apiGroups:
+    - do.pulumi.com
+  resources:
     - doproviders
   verbs:
     - get

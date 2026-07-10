@@ -79,15 +79,23 @@ func envOr(key, fallback string) string {
 // are watched cluster-wide either way.
 func parseWatchNamespaces(list string) map[string]cache.Config {
 	namespaces := map[string]cache.Config{}
-	for _, ns := range strings.Split(list, ",") {
-		if ns = strings.TrimSpace(ns); ns != "" {
-			namespaces[ns] = cache.Config{}
-		}
+	for _, ns := range splitCommaList(list) {
+		namespaces[ns] = cache.Config{}
 	}
 	if len(namespaces) == 0 {
 		return nil
 	}
 	return namespaces
+}
+
+func splitCommaList(list string) []string {
+	var out []string
+	for _, item := range strings.Split(list, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func init() {
@@ -193,6 +201,7 @@ func main() {
 	var pluginCacheMountPath string
 	var runnerTimeout time.Duration
 	var pulumiBin string
+	var compositeAPIGroups string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -241,6 +250,10 @@ func main() {
 	flag.DurationVar(&runnerTimeout, "runner-timeout", 10*time.Minute,
 		"Timeout for a single pulumi do operation.")
 	flag.StringVar(&pulumiBin, "pulumi-bin", "pulumi", "Path to the pulumi binary (exec mode only).")
+	flag.StringVar(&compositeAPIGroups, "composite-api-groups", os.Getenv("COMPOSITE_API_GROUPS"),
+		"Comma-separated allowlist of additional API groups DoCompositeDefinitions may serve typed "+
+			"platform APIs in (spec.api.group). The fixed typed.do.pulumi.com group is always allowed. "+
+			"Every listed group needs matching manager RBAC — the compositeApiGroups Helm value renders both.")
 	// In-cluster deployments (detected like defaultRunnerMode) log structured
 	// JSON at production levels; local development keeps the human-friendly
 	// console encoder. Both are overridable via the --zap-* flags.
@@ -425,10 +438,12 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.DoCompositeDefinitionReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("doplane"),
-		Typed:    typedRegistrar,
+		Client:        mgr.GetClient(),
+		Live:          mgr.GetAPIReader(),
+		Scheme:        mgr.GetScheme(),
+		Recorder:      mgr.GetEventRecorderFor("doplane"),
+		Typed:         typedRegistrar,
+		AllowedGroups: splitCommaList(compositeAPIGroups),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DoCompositeDefinition")
 		os.Exit(1)

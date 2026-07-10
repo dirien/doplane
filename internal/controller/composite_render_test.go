@@ -50,7 +50,16 @@ func TestRenderComposite(t *testing.T) {
 	def := &dov1alpha1.DoCompositeDefinition{
 		ObjectMeta: metav1.ObjectMeta{Name: "website"},
 		Spec: dov1alpha1.DoCompositeDefinitionSpec{
-			RequiredParameters: []string{"env"},
+			API: &dov1alpha1.CompositeAPI{
+				Kind: "Website",
+				ParametersSchema: &apiextensionsv1.JSONSchemaProps{
+					Type:     "object",
+					Required: []string{"env"},
+					Properties: map[string]apiextensionsv1.JSONSchemaProps{
+						"env": {Type: "string"},
+					},
+				},
+			},
 			Resources: []dov1alpha1.CompositeResourceTemplate{
 				{
 					Name: "bucket",
@@ -150,6 +159,26 @@ func TestRenderCompositeTypedParam(t *testing.T) {
 	}
 	if props["length"] != float64(4) {
 		t.Errorf("whole-string param must keep its type, got %T %v", props["length"], props["length"])
+	}
+}
+
+func TestRenderCompositeExternalName(t *testing.T) {
+	def := &dov1alpha1.DoCompositeDefinition{
+		ObjectMeta: metav1.ObjectMeta{Name: "website"},
+		Spec: dov1alpha1.DoCompositeDefinitionSpec{
+			Resources: []dov1alpha1.CompositeResourceTemplate{{
+				Name:         "bucket",
+				Type:         "aws:s3/bucketV2:BucketV2",
+				ExternalName: "legacy-${params.env}-assets",
+			}},
+		},
+	}
+	children, err := renderComposite(testComposite(t, map[string]any{"env": "prod"}), def)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := children[0].Annotations[annExternalName]; got != "legacy-prod-assets" {
+		t.Errorf("externalName must render into the adopt annotation, got %q", got)
 	}
 }
 
@@ -301,10 +330,38 @@ func TestRenderCompositeErrors(t *testing.T) {
 		{"missing required", &dov1alpha1.DoCompositeDefinition{
 			ObjectMeta: metav1.ObjectMeta{Name: "website"},
 			Spec: dov1alpha1.DoCompositeDefinitionSpec{
-				RequiredParameters: []string{"env"},
-				Resources:          []dov1alpha1.CompositeResourceTemplate{{Name: "a", Type: "t:m:R"}},
+				API: &dov1alpha1.CompositeAPI{
+					Kind: "Website",
+					ParametersSchema: &apiextensionsv1.JSONSchemaProps{
+						Type:     "object",
+						Required: []string{"env"},
+					},
+				},
+				Resources: []dov1alpha1.CompositeResourceTemplate{{Name: "a", Type: "t:m:R"}},
 			},
-		}, map[string]any{}, "required parameter"},
+		}, map[string]any{}, "env"},
+		{"wrong param type", &dov1alpha1.DoCompositeDefinition{
+			ObjectMeta: metav1.ObjectMeta{Name: "website"},
+			Spec: dov1alpha1.DoCompositeDefinitionSpec{
+				API: &dov1alpha1.CompositeAPI{
+					Kind: "Website",
+					ParametersSchema: &apiextensionsv1.JSONSchemaProps{
+						Type:       "object",
+						Properties: map[string]apiextensionsv1.JSONSchemaProps{"env": {Type: "string"}},
+					},
+				},
+				Resources: []dov1alpha1.CompositeResourceTemplate{{Name: "a", Type: "t:m:R"}},
+			},
+		}, map[string]any{"env": 7}, "env"},
+		{"externalName with sibling ref", &dov1alpha1.DoCompositeDefinition{
+			ObjectMeta: metav1.ObjectMeta{Name: "website"},
+			Spec: dov1alpha1.DoCompositeDefinitionSpec{
+				Resources: []dov1alpha1.CompositeResourceTemplate{
+					{Name: "a", Type: "t:m:R"},
+					{Name: "b", Type: "t:m:R", ExternalName: "${resources.a.id}"},
+				},
+			},
+		}, map[string]any{}, "externalName"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
