@@ -218,9 +218,38 @@ schema marks the token as `isComponent`, the generated kind is still backed
 by a DoResource, but the resource controller uses the component engine path
 and stores the checkpoint on the mirror's `status.engineState`.
 
-Likewise, a `DoCompositeDefinition` with `spec.api` serves a
-platform API (`kind: StaticSite`) whose spec is the composite's
-parameters, optionally validated by `spec.api.parametersSchema`.
+Likewise, a `DoCompositeDefinition` with `spec.api` serves a **platform
+API**: apply the definition and doplane serves e.g.
+`websites.platform.acme.com/v1` — a real, versioned, branded Kubernetes
+kind whose spec is the composite's parameters. The typed kind is the
+product; `DoComposite` remains as visible machinery for debugging.
+
+- `spec.api.group` picks the API group (default `typed.do.pulumi.com`).
+  Platform groups must be on the install-time allowlist (Helm value
+  `compositeApiGroups`, which also renders the matching manager RBAC); an
+  unlisted group is a terminal `GroupNotAllowed` condition.
+- `spec.api.parametersSchema` is the single parameter contract: it
+  validates typed objects at admission, `DoComposite.spec.parameters` at
+  render time, and the templates' `${params.*}` usage when the definition
+  is applied.
+- The reserved `spec.doplane` block on typed objects carries doplane's
+  lifecycle knobs (`updatePolicy`, `revisionRef`) — full parity with raw
+  DoComposites; a parameter named `doplane` is rejected.
+- `kubectl get docd` shows the serving state (`APIServed` condition:
+  `Served`, `InvalidSchema`, `GroupNotAllowed`, `CRDConflict`,
+  `StoredVersionInUse`) plus per-version object counts.
+- Versioning follows the Crossplane model: `spec.api.version` bumps must
+  stay round-trippable (generated CRDs use conversion `None`; a new
+  *required* parameter is a new API, not a new version). The old version
+  stays served via `spec.api.deprecatedVersions` until its object count
+  reaches zero, then may be dropped. `spec.api.group`/`kind`/`plural` are
+  immutable — a rename is a new definition.
+- Deleting a definition is blocked by a finalizer while typed objects
+  exist; at zero objects the generated CRD is removed. Ownership is
+  persisted on the CRD itself, so two definitions can never silently fight
+  over one kind — the loser gets a terminal `CRDConflict`.
+- Composite templates can set `externalName` (params/self expressions
+  allowed) to adopt existing external resources per child.
 
 ## Day-2 operations
 
