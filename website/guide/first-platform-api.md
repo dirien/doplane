@@ -123,8 +123,8 @@ spec:
   petLength: 9
 EOF
 # The WebIdentity "broken" is invalid:
-# * spec.team: Required value
 # * spec.petLength: Invalid value: 9: spec.petLength in body should be less than or equal to 5
+# * spec.team: Required value
 ```
 
 `kubectl explain webidentities.spec --api-version=platform.example.com/v1` documents the parameters, including the reserved `doplane` block that carries doplane's lifecycle knobs (`updatePolicy`, `revisionRef`).
