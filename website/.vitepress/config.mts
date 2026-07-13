@@ -32,7 +32,13 @@ export default defineConfig({
       {
         text: 'Start here',
         items: [
-          { text: 'Getting started', link: '/guide/getting-started' },
+          {
+            text: 'Getting started',
+            link: '/guide/getting-started',
+            items: [
+              { text: 'Your first platform API', link: '/guide/first-platform-api' }
+            ]
+          },
           { text: 'Discover providers and components', link: '/guide/discover' },
           { text: 'Choose an API', link: '/guide/choose-an-api' },
           { text: 'Platform APIs', link: '/guide/platform-apis' }
