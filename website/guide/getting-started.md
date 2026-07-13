@@ -81,4 +81,4 @@ Deletion waits for the provider delete unless `spec.deletionPolicy` is `Orphan`.
 
 ## Next task
 
-Choose the right abstraction before adding a cloud resource: [raw, provider-backed, typed, or composite API](/guide/choose-an-api).
+Publish your first branded platform API with the same credential-free provider: [Your first platform API](/guide/first-platform-api). Or choose the right abstraction before adding a cloud resource: [raw, provider-backed, typed, or composite API](/guide/choose-an-api).
