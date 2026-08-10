@@ -1,0 +1,87 @@
+# Level 14 — a typed platform API with a full parameter surface: string,
+# enum, integer and boolean values pass straight from the typed object's
+# spec into the templates. A whole-string ${params.*} expression keeps the
+# parameter's native type (nameLength lands as randomPet's numeric length,
+# upperToken as randomString's boolean), so the admission schema is the
+# single typed contract end to end. No cloud credentials needed.
+#
+# Platform team: provider profile (once per cluster) ...
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoProvider
+metadata:
+  name: random-params
+spec:
+  package: random@4.21.0
+---
+# ... and the workflow, served as `kind: ServiceIdentity`. Every parameter
+# referenced by the templates is required, so the API server rejects an
+# incomplete spec at admission and the render never sees a missing value.
+# Check serving state with:
+#   kubectl get docd service-identity
+apiVersion: do.pulumi.com/v1alpha1
+kind: DoCompositeDefinition
+metadata:
+  name: service-identity
+spec:
+  api:
+    kind: ServiceIdentity
+    # group: platform.example.com   # needs the compositeApiGroups allowlist
+    parametersSchema:
+      type: object
+      required:
+        - team
+        - env
+        - nameLength
+        - upperToken
+      properties:
+        team:
+          type: string
+          minLength: 1
+          maxLength: 20
+        env:
+          type: string
+          enum:
+            - dev
+            - staging
+            - prod
+        nameLength:
+          type: integer
+          minimum: 2
+          maximum: 5
+        upperToken:
+          type: boolean
+  resources:
+    - name: pet
+      type: random:index/randomPet:RandomPet
+      providerRef:
+        name: random-params
+      properties:
+        # whole-string expression: stays an integer
+        length: ${params.nameLength}
+        # mixed string: params interpolate freely
+        prefix: ${params.team}-${params.env}
+    - name: token
+      type: random:index/randomString:RandomString
+      providerRef:
+        name: random-params
+      properties:
+        length: 12
+        special: false
+        # whole-string expression: stays a boolean
+        upper: ${params.upperToken}
+        keepers:
+          identity: ${resources.pet.id}
+---
+# App team: one typed object; spec IS the values to pass. The enum,
+# bounds and types above are enforced by the API server before doplane
+# ever reconciles. (Wait for the API to be served first:
+#   kubectl wait --for=condition=Established crd/serviceidentities.typed.do.pulumi.com --timeout=1m)
+apiVersion: typed.do.pulumi.com/v1alpha1
+kind: ServiceIdentity
+metadata:
+  name: payments-prod
+spec:
+  team: payments
+  env: prod
+  nameLength: 3
+  upperToken: false

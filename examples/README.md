@@ -20,6 +20,7 @@ the registry token and a kubeconfig for the runner:
 | 10 | `10-cataloged-composite.yaml` | the full provider UX: profile + cataloged composite served as its own typed platform API (`kind: PetIdentity`, schema-validated at admission) — no cloud account needed |
 | 11 | `11-secrets-in-and-out.yaml` | `valuesFrom` secret inputs (value kept out of manifests, events and logs; never in identity-forming properties) + `writeConnectionSecretToRef` connection secret — no cloud account needed |
 | 12 | `12-typed-private-registry-component-provider.yaml` + `13-typed-private-registry-component.yaml` | component package schema exposed as a generated typed CRD; typed object drives the component engine |
+| 14 | `14-platform-api-parameters.yaml` | typed platform API with a full parameter surface (string, enum, integer, boolean); whole-string `${params.*}` expressions keep native types — no cloud account needed |
 
 Generated help for any resource type (required/optional inputs, reference
 paths, example YAML):
@@ -93,4 +94,12 @@ kubectl wait doprovider typed-web-app --for=condition=Ready --timeout=2m
 kubectl wait --for=condition=Established crd/webappcomponents.typed.do.pulumi.com --timeout=2m
 kubectl apply -f examples/13-typed-private-registry-component.yaml
 kubectl get webappcomponents.typed.do.pulumi.com typed-private-web-app -w
+
+# Platform API with typed values: enum/integer/boolean parameters validated
+# at admission, passed into the templates with their native types.
+# (Apply twice if the ServiceIdentity CRD is not served yet on the first pass.)
+kubectl apply -f examples/14-platform-api-parameters.yaml
+kubectl get docd service-identity            # SERVED True
+kubectl get serviceidentities payments-prod -w
+kubectl get dores -l do.pulumi.com/composite=payments-prod  # rendered children
 ```
