@@ -404,10 +404,12 @@ make run      # run the manager locally in exec mode (uses your pulumi login/env
 
 ## Design notes & limitations
 
-- **pulumi >= 3.250 required** in the runner image: `pulumi do` CRUD needs
-  `--stateless` there (the engine-driven stateful mode is not implemented
-  yet). Stateless is precisely what this operator wants — status is the
-  state.
+- **pulumi >= 3.252 required** in the runner image: `pulumi do` CRUD needs
+  `--stateless`, YAML `--input-file` parsing and `--output json` there (the
+  engine-driven stateful mode is not implemented yet). Stateless is precisely
+  what this operator wants — status is the state. The image pins 3.256.0,
+  which also reports already-deleted resources as not-found on delete retries
+  (pulumi/pulumi#24115).
 - The reconciler reads the primary object through the **live API reader**
   (not the informer cache) and persists status with conflict retries:
   Job-backed reconciles run for tens of seconds, and acting on a stale

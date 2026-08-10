@@ -157,17 +157,22 @@ func (r *Runner) executeDo(ctx context.Context, ws *workspace, op Op) Result {
 		args = append(args, "--yes")
 	}
 	if len(op.Properties) > 0 {
-		pcl, err := MarshalPCL(op.Properties)
+		// pulumi >= 3.252 parses --input-file as YAML (through the yaml
+		// converter plugin, baked into the runner image); JSON is a valid
+		// YAML mapping and marshals property values faithfully.
+		doc, err := json.Marshal(op.Properties)
 		if err != nil {
 			return failure(CodeInvalidSpec, "rendering inputs: %v", err)
 		}
-		inputFile := filepath.Join(ws.root, "input.pp")
-		if err := os.WriteFile(inputFile, []byte(pcl), 0o600); err != nil {
+		inputFile := filepath.Join(ws.root, "input.yaml")
+		if err := os.WriteFile(inputFile, doc, 0o600); err != nil {
 			return failure(CodeOperationFailed, "writing input file: %v", err)
 		}
 		args = append(args, "--input-file", inputFile)
 	}
-	args = append(args, "--stateless", "--non-interactive", "--color", "never")
+	// --output json restores the machine-readable result document that
+	// pulumi >= 3.252 no longer prints by default.
+	args = append(args, "--stateless", "--non-interactive", "--color", "never", "--output", "json")
 
 	stdout, runErr := r.run(ctx, ws, args...)
 	if runErr != nil {
@@ -375,7 +380,9 @@ func (r *Runner) runEnv(ctx context.Context, dir string, env []string, args ...s
 	flush()
 	if runErr != nil {
 		combined := strings.TrimSpace(stderr.String() + "\n" + stdout.String())
-		return stdout.String(), fmt.Errorf("%w: %s", runErr, Truncate(combined, 4000))
+		// Newline keeps the child's first "error:" line a whole line, so
+		// ProviderErrorText-based classification still sees its prefix.
+		return stdout.String(), fmt.Errorf("%w:\n%s", runErr, Truncate(combined, 4000))
 	}
 	return stdout.String(), nil
 }

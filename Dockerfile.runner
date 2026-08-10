@@ -16,7 +16,7 @@ COPY cmd/runner/ cmd/runner/
 COPY internal/runnerops/ internal/runnerops/
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -o doplane-runner ./cmd/runner
 
-FROM pulumi/pulumi:3.250.0
+FROM pulumi/pulumi:3.256.0
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
@@ -35,7 +35,11 @@ ARG AWS_PLUGIN_VERSION=7.34.0
 ARG DIGITALOCEAN_PLUGIN_VERSION=4.73.0
 ARG RANDOM_PLUGIN_VERSION=4.21.0
 ARG KUBERNETES_PLUGIN_VERSION=4.23.0
-RUN pulumi plugin install resource random ${RANDOM_PLUGIN_VERSION} \
+# pulumi >= 3.252 parses `pulumi do --input-file` as YAML through this
+# converter; bake it so hardened pods need no runtime download.
+ARG YAML_CONVERTER_VERSION=1.37.0
+RUN pulumi plugin install converter yaml ${YAML_CONVERTER_VERSION} \
+    && pulumi plugin install resource random ${RANDOM_PLUGIN_VERSION} \
     && pulumi plugin install resource aws ${AWS_PLUGIN_VERSION} \
     && pulumi plugin install resource digitalocean ${DIGITALOCEAN_PLUGIN_VERSION} \
     && pulumi plugin install resource kubernetes ${KUBERNETES_PLUGIN_VERSION} \
