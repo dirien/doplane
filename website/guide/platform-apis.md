@@ -93,6 +93,14 @@ One Helm value renders both the `--composite-api-groups` allowlist flag and the 
 
 There is no separate required-parameters list and no second schema to keep in sync.
 
+Parameters are typed end to end: a template value that is exactly one
+`${params.*}` expression keeps the parameter's native type (an integer
+parameter can feed a numeric provider input such as `randomPet`'s `length`),
+while parameters inside longer strings interpolate as text.
+[`examples/14-platform-api-parameters.yaml`](https://github.com/dirien/doplane/blob/main/examples/14-platform-api-parameters.yaml)
+exercises a full surface — string, enum, integer and boolean — through one
+typed kind.
+
 ## Evolve an API
 
 Versioning follows the Crossplane model. Generated CRDs always use conversion strategy `None`, so every served version must stay round-trippable: adding an optional parameter is a version bump; a new required parameter is a new API, not a new version.

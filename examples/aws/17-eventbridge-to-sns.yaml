@@ -1,12 +1,13 @@
-# AWS 17 — EventBridge scheduled rule → SNS
+# AWS 17 — EventBridge Scheduler → SNS
 #
-# A scheduled EventBridge rule that fires hourly and targets an SNS topic. The
-# topic policy grants the EventBridge service publish rights; the target
-# references the topic policy's ARN (== topic ARN) so it is created after the
-# policy exists.
+# An hourly schedule that publishes to an SNS topic, using EventBridge
+# Scheduler: the target is a property of the schedule itself (no separate
+# aws:cloudwatch/eventTarget object — the provider cannot read a target back
+# from its bare id, so a standalone target orphans on stateless delete). The
+# schedule assumes a role whose inline policy is scoped to this topic.
 #
-#   suffix ─> topic ─> topicpolicy ─┐
-#            rule ──────────────────┴─> target
+#   suffix ─> topic ─┬─> role (inline sns:Publish on the topic)
+#                    └─> schedule (target: topic + role)
 apiVersion: do.pulumi.com/v1alpha1
 kind: DoCompositeDefinition
 metadata:
@@ -29,29 +30,29 @@ spec:
         tags:
           managed-by: doplane
           env: ${params.env}
-    - name: topicpolicy
-      type: aws:sns/topicPolicy:TopicPolicy
+    - name: role
+      type: aws:iam/role:Role
       package: aws@7.34.0
       properties:
-        arn: ${resources.topic.outputs.arn}
-        policy: '{"Version":"2012-10-17","Statement":[{"Sid":"AllowEventBridge","Effect":"Allow","Principal":{"Service":"events.amazonaws.com"},"Action":"SNS:Publish","Resource":"${resources.topic.outputs.arn}"}]}'
-    - name: rule
-      type: aws:cloudwatch/eventRule:EventRule
-      package: aws@7.34.0
-      properties:
-        name: ${self.name}-hourly-${resources.suffix.id}
-        description: Hourly tick for ${self.name}
-        scheduleExpression: rate(1 hour)
-        state: ENABLED
+        name: ${self.name}-scheduler-${resources.suffix.id}
+        assumeRolePolicy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"scheduler.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+        inlinePolicies:
+          - name: publish
+            policy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"sns:Publish","Resource":"${resources.topic.outputs.arn}"}]}'
         tags:
           managed-by: doplane
           env: ${params.env}
-    - name: target
-      type: aws:cloudwatch/eventTarget:EventTarget
+    - name: schedule
+      type: aws:scheduler/schedule:Schedule
       package: aws@7.34.0
       properties:
-        rule: ${resources.rule.outputs.name}
-        arn: ${resources.topicpolicy.outputs.arn}
+        name: ${self.name}-hourly-${resources.suffix.id}
+        scheduleExpression: rate(1 hour)
+        flexibleTimeWindow:
+          mode: "OFF"
+        target:
+          arn: ${resources.topic.outputs.arn}
+          roleArn: ${resources.role.outputs.arn}
 ---
 apiVersion: do.pulumi.com/v1alpha1
 kind: DoComposite

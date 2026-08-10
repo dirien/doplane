@@ -1,13 +1,15 @@
-# AWS 19 — VPC security group with rules
+# AWS 19 — VPC security group (inline rules)
 #
-# A web-tier security group in a VPC, using the modern standalone rule
-# resources (aws:vpc/securityGroupIngressRule / ...EgressRule) rather than
-# inline blocks. Two ingress rules (HTTP/HTTPS from anywhere) and one
-# all-egress rule reference the security group id.
+# A web-tier security group in a VPC with its HTTP/HTTPS ingress and
+# all-egress rules declared inline on the group itself.
 #
-#   suffix ─> vpc ─> sg ─┬─> ingress-http
-#                        ├─> ingress-https
-#                        └─> egress-all
+# Why inline rather than the standalone aws:vpc/securityGroup*Rule resources:
+# the provider cannot read those rules back from their bare sgr- id (refresh
+# reports not-found), so stateless delete revokes with an empty GroupId and
+# fails. Inline rules live and die with the group — one resource, clean
+# teardown.
+#
+#   suffix ─> vpc ─> sg (inline http/https ingress + all egress)
 apiVersion: do.pulumi.com/v1alpha1
 kind: DoCompositeDefinition
 metadata:
@@ -37,37 +39,29 @@ spec:
         name: ${self.name}-web-${resources.suffix.id}
         description: Web tier for ${self.name}
         vpcId: ${resources.vpc.id}
+        ingress:
+          - description: HTTP
+            protocol: tcp
+            fromPort: 80
+            toPort: 80
+            cidrBlocks:
+              - 0.0.0.0/0
+          - description: HTTPS
+            protocol: tcp
+            fromPort: 443
+            toPort: 443
+            cidrBlocks:
+              - 0.0.0.0/0
+        egress:
+          - description: All egress
+            protocol: "-1"
+            fromPort: 0
+            toPort: 0
+            cidrBlocks:
+              - 0.0.0.0/0
         tags:
           managed-by: doplane
           env: ${params.env}
-    - name: ingresshttp
-      type: aws:vpc/securityGroupIngressRule:SecurityGroupIngressRule
-      package: aws@7.34.0
-      properties:
-        securityGroupId: ${resources.sg.id}
-        ipProtocol: tcp
-        fromPort: 80
-        toPort: 80
-        cidrIpv4: 0.0.0.0/0
-        description: HTTP
-    - name: ingresshttps
-      type: aws:vpc/securityGroupIngressRule:SecurityGroupIngressRule
-      package: aws@7.34.0
-      properties:
-        securityGroupId: ${resources.sg.id}
-        ipProtocol: tcp
-        fromPort: 443
-        toPort: 443
-        cidrIpv4: 0.0.0.0/0
-        description: HTTPS
-    - name: egressall
-      type: aws:vpc/securityGroupEgressRule:SecurityGroupEgressRule
-      package: aws@7.34.0
-      properties:
-        securityGroupId: ${resources.sg.id}
-        ipProtocol: "-1"
-        cidrIpv4: 0.0.0.0/0
-        description: All egress
 ---
 apiVersion: do.pulumi.com/v1alpha1
 kind: DoComposite
