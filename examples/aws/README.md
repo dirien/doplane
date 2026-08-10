@@ -43,12 +43,12 @@ deploy manifests).
 | 14 | `14-vpc-network.yaml` | VPC + IGW + subnet + route table + route | VPC/EC2 |
 | 15 | `15-bucket-notify-sns.yaml` | S3 → SNS object-created notifications | S3, SNS |
 | 16 | `16-composite-alarm.yaml` | Composite alarm over warn + crit metric alarms | CloudWatch |
-| 17 | `17-eventbridge-to-sns.yaml` | Scheduled EventBridge rule → SNS | EventBridge, SNS |
+| 17 | `17-eventbridge-to-sns.yaml` | EventBridge Scheduler → SNS (inline target + scoped role) | EventBridge, SNS, IAM |
 | 18 | `18-log-metric-filter.yaml` | Log metric filter + alarm on the derived metric | CloudWatch |
-| 19 | `19-security-group.yaml` | VPC security group + standalone ingress/egress rules | VPC/EC2 |
+| 19 | `19-security-group.yaml` | VPC security group with inline ingress/egress rules | VPC/EC2 |
 | 20 | `20-step-functions.yaml` | Step Functions state machine + execution role | Step Functions, IAM |
 | 21 | `21-vpc-s3-endpoint.yaml` | VPC + route table + S3 gateway endpoint | VPC/EC2 |
-| 22 | `22-appconfig.yaml` | AppConfig application + environment + profile | AppConfig |
+| 22 | `22-appconfig.yaml` | AppConfig application + profile + deployment strategy | AppConfig |
 | 23 | `23-cloudwatch-dashboard.yaml` | Log group + alarm + dashboard | CloudWatch |
 | 24 | `24-sns-sqs-encrypted.yaml` | KMS-encrypted SNS → SQS | KMS, SNS, SQS |
 | 25 | `25-sqs-consumer-role.yaml` | Queue + consumer role + access policy | SQS, IAM |
@@ -80,25 +80,29 @@ kubectl get doresources | grep bkt-         # drains to empty; buckets deleted i
   inline freely). Policies needing two sibling ARNs are reduced to one source;
   where ordering matters, a resource references an upstream *policy's* output
   (which echoes the ARN) to both get the value and gate creation order.
-- **Stateless delete (pulumi >= the #23837 fix).** `pulumi do delete` currently
-  receives only the resource ID — no input state — so any resource whose
-  provider `Delete` reads input properties cannot be torn down on the pinned
-  runner `pulumi` 3.250.0. This is broader than IAM: it includes
-  `aws:ssm/parameter`, `aws:ecr/repositoryPolicy`, `aws:route53/record`,
-  `aws:ec2/route`, `aws:cloudwatch/logMetricFilter`,
-  `aws:cloudwatch/eventTarget`, `aws:vpc/securityGroup{Ingress,Egress}Rule`,
-  `aws:appconfig/environment`, `aws:iam/rolePolicyAttachment`,
-  `aws:iam/instanceProfile` and roles with `managedPolicyArns`. Resources whose
-  delete needs only the ID (S3, DynamoDB, SNS/SQS, KMS, VPC, VPC endpoints,
-  security groups, Step Functions, CloudWatch alarms/dashboards, standalone
-  `iam/role` and `iam/policy`, …) tear down cleanly.
+- **Stateless delete.** The runner pins `pulumi` **3.256.0**. Since 3.252,
+  delete reads the resource back first (pulumi/pulumi#23837), so shapes that
+  need input state on delete — IAM attachments, instance profiles, roles with
+  managed/inline policies, SSM parameters, Route 53 records, EC2 routes, log
+  metric filters, ECR repository policies, security-group rules, AppConfig
+  environments — all tear down cleanly. 3.256 additionally treats a read that
+  returns empty outputs and no id as not-found (pulumi/pulumi#24115), so
+  *retrying* a delete whose first attempt already succeeded no-ops for most
+  resources instead of calling the provider with emptied state. Two upstream
+  sharp edges remain (pulumi/pulumi#23916): `aws:cloudwatch/eventTarget`
+  stores an id its read cannot parse, so its delete reports "not found" while
+  the target survives in AWS (and then blocks the eventRule's delete) — a
+  provider-side bug; and bridged resources whose failed read still echoes an
+  id keep the emptied-state retry behavior until pulumi/pulumi#24188 lands.
+  The examples sidestep the affected resources: EventBridge Scheduler with
+  its inline target instead of a standalone eventTarget (17), inline SG rules
+  (19), and a deployment strategy instead of an environment (22).
 
-  **Verified on the pinned runner (pulumi 3.250.0):** all 26 create cleanly
-  (both stacks). Full create **and** delete verified for **01–08, 11, 12, 15,
-  16, 20, 21, 23, 24, 25, 26** (18). Create-verified with delete pending the
-  upstream fix (pulumi/pulumi#23837) for **09, 10, 13, 14, 17, 18, 19, 22** (8)
-  — they contain one of the input-state-on-delete resources above. The
-  component (26) runs the **stateful** engine and has no such limitation.
+  **Verified on the runner at pulumi 3.252.0** (the 3.256.0 bump changes
+  delete-retry behavior only): all 26 examples create
+  **and** delete cleanly, both stacks each, against a live AWS account. The
+  component (26) runs the **stateful** engine and never depended on the
+  stateless-delete behavior.
 - **Cost.** Everything here is free or a few cents (S3, IAM, DynamoDB
   on-demand, SNS/SQS, CloudWatch, ECR, SSM, VPC without NAT, AppConfig, Step
   Functions). KMS keys enter a 7-day `PendingDeletion` on teardown; Secrets

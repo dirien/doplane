@@ -1,11 +1,16 @@
 # AWS 22 — AWS AppConfig application
 #
-# Feature-flag / dynamic-config plumbing: an AppConfig application, an
-# environment, and a freeform (hosted) configuration profile. Environment and
-# profile both reference the application id. All free.
+# Feature-flag / dynamic-config plumbing: an AppConfig application, a freeform
+# (hosted) configuration profile, and a linear deployment strategy. Profile
+# references the application id. All free.
 #
-#   suffix ─> app ─┬─> environment
-#                  └─> profile
+# Why no aws:appconfig/environment: the provider cannot read an environment
+# back from its composite "envId:appId" id, so stateless delete calls
+# DeleteEnvironment with empty ids and fails; the deployment strategy (plain
+# id) deletes cleanly and completes the deployment story.
+#
+#   suffix ─> app ─> profile
+#            strategy
 apiVersion: do.pulumi.com/v1alpha1
 kind: DoCompositeDefinition
 metadata:
@@ -29,15 +34,6 @@ spec:
         tags:
           managed-by: doplane
           env: ${params.env}
-    - name: environment
-      type: aws:appconfig/environment:Environment
-      package: aws@7.34.0
-      properties:
-        applicationId: ${resources.app.id}
-        name: ${params.env}
-        description: ${params.env} environment
-        tags:
-          managed-by: doplane
     - name: profile
       type: aws:appconfig/configurationProfile:ConfigurationProfile
       package: aws@7.34.0
@@ -46,6 +42,19 @@ spec:
         name: ${self.name}-flags
         locationUri: hosted
         type: AWS.Freeform
+        tags:
+          managed-by: doplane
+    - name: strategy
+      type: aws:appconfig/deploymentStrategy:DeploymentStrategy
+      package: aws@7.34.0
+      properties:
+        name: ${self.name}-linear-${resources.suffix.id}
+        deploymentDurationInMinutes: 10
+        growthFactor: 25
+        growthType: LINEAR
+        finalBakeTimeInMinutes: 0
+        replicateTo: NONE
+        description: Linear 25% rollout for ${self.name}
         tags:
           managed-by: doplane
 ---
