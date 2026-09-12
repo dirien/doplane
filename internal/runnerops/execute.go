@@ -111,6 +111,13 @@ func (r *Runner) Execute(ctx context.Context, op Op) Result {
 		return failure(CodeInvalidSpec, "secret inputs are not supported for component resources")
 	}
 
+	// Read and delete carry no properties: substituting a secret input would
+	// conjure an input file that `pulumi do read`/`delete` reject, and a
+	// missing Secret must not block reading or deleting a resource.
+	if !VerbTakesSecretInputs(op.Verb) {
+		op.SecretInputs = nil
+	}
+
 	// Substitute secret input values (delivered out of band as env vars)
 	// into the properties, and redact them from every output channel:
 	// streamed progress, error messages and the recorded state.

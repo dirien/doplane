@@ -153,7 +153,8 @@ func fakePulumi(t *testing.T, doStderr, destroyStderr string) (bin, log, capture
 	script := `#!/bin/sh
 echo "$@" >> "$FAKE_PULUMI_LOG"
 case "$1" in
-  do) printf '%s\n' "$FAKE_PULUMI_DO_STDERR" >&2; exit 1 ;;
+  do) if [ -n "$FAKE_PULUMI_DO_STDOUT" ]; then printf '%s\n' "$FAKE_PULUMI_DO_STDOUT"; exit 0; fi
+      printf '%s\n' "$FAKE_PULUMI_DO_STDERR" >&2; exit 1 ;;
   stack) [ "$2" = import ] && cp "$4" "$FAKE_PULUMI_CAPTURE"; exit 0 ;;
   destroy) if [ -n "$FAKE_PULUMI_DESTROY_STDERR" ]; then printf '%s\n' "$FAKE_PULUMI_DESTROY_STDERR" >&2; exit 1; fi; exit 0 ;;
 esac
@@ -165,8 +166,47 @@ exit 1
 	t.Setenv("FAKE_PULUMI_LOG", log)
 	t.Setenv("FAKE_PULUMI_CAPTURE", capture)
 	t.Setenv("FAKE_PULUMI_DO_STDERR", doStderr)
+	t.Setenv("FAKE_PULUMI_DO_STDOUT", "")
 	t.Setenv("FAKE_PULUMI_DESTROY_STDERR", destroyStderr)
 	return bin, log, capture
+}
+
+func TestExecuteReadAndDeleteIgnoreSecretInputs(t *testing.T) {
+	// The reconcile ctx carries the valuesFrom plan for the whole pass; a
+	// read or delete must neither substitute (there are no properties, and
+	// `pulumi do read`/`delete` reject --input-file) nor fail when the
+	// Secret's env var is absent.
+	for _, verb := range []string{VerbRead, VerbDelete} {
+		t.Run(verb, func(t *testing.T) {
+			bin, log, _ := fakePulumi(t, "", "")
+			t.Setenv("FAKE_PULUMI_DO_STDOUT", `{"id": "pet-1", "prefix": "p"}`)
+			r := &Runner{PulumiBin: bin, Progress: io.Discard,
+				LookupEnv: func(string) (string, bool) { return "", false }}
+			res := r.Execute(context.Background(), Op{
+				Verb: verb, Token: "random:index/randomPet:RandomPet", Package: "random@4.21.0", ID: "pet-1",
+				SecretInputs: map[string]string{"keepers.rotation": "DOPLANE_SECRET_0"},
+			})
+			if !res.OK {
+				t.Fatalf("expected success, got %+v", res)
+			}
+			argv, _ := os.ReadFile(log) // #nosec G304 -- test temp dir
+			if strings.Contains(string(argv), "--input-file") {
+				t.Errorf("%s must not pass an input file: %s", verb, argv)
+			}
+		})
+	}
+}
+
+func TestVerbTakesSecretInputs(t *testing.T) {
+	want := map[string]bool{
+		VerbCreate: true, VerbPatch: true, VerbEngineUp: true, VerbEngineDestroy: true,
+		VerbRead: false, VerbDelete: false, VerbSchema: false, "bogus": false,
+	}
+	for verb, w := range want {
+		if got := VerbTakesSecretInputs(verb); got != w {
+			t.Errorf("VerbTakesSecretInputs(%q) = %v, want %v", verb, got, w)
+		}
+	}
 }
 
 func TestExecuteDeleteFallsBackToEngineDestroy(t *testing.T) {

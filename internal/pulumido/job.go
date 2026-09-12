@@ -390,7 +390,7 @@ func (r *JobRunner) jobName(ctx context.Context, verb, opJSON string) string {
 	// would adopt a completed Job that ran with the OLD secret value. The
 	// salt is empty for ops without secret inputs, leaving their names
 	// unchanged.
-	if salt := secretVersionSaltFromContext(ctx); salt != "" {
+	if salt := secretVersionSaltFromContext(ctx); salt != "" && runnerops.VerbTakesSecretInputs(verb) {
 		_, _ = h.Write([]byte{0})
 		_, _ = h.Write([]byte(salt))
 	}
@@ -404,8 +404,11 @@ func (r *JobRunner) jobName(ctx context.Context, verb, opJSON string) string {
 func (r *JobRunner) executeOp(ctx context.Context, op runnerops.Op) (runnerops.Result, error) {
 	// Secret inputs travel as kubelet-resolved env vars; only the
 	// path→variable mapping enters the op document (and thus the Job spec).
+	// The reconcile ctx carries the plan for the whole pass, but only ops
+	// with properties consume it: a read or delete Job gets neither the
+	// secretKeyRef env nor the rotation salt in its name.
 	var secretEnv []corev1.EnvVar
-	if inputs := SecretInputsFromContext(ctx); len(inputs) > 0 {
+	if inputs := SecretInputsFromContext(ctx); len(inputs) > 0 && runnerops.VerbTakesSecretInputs(op.Verb) {
 		var ordered []SecretInput
 		op.SecretInputs, ordered = secretInputsPlan(inputs)
 		for i, in := range ordered {

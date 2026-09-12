@@ -53,7 +53,8 @@ func (r *ExecRunner) execute(ctx context.Context, op runnerops.Op) (runnerops.Re
 	ctx, cancel := context.WithTimeout(ctx, r.timeout())
 	defer cancel()
 	ops := &runnerops.Runner{PulumiBin: r.PulumiBin}
-	if inputs := SecretInputsFromContext(ctx); len(inputs) > 0 {
+	// Only ops with properties consume the ctx's secret plan (see JobRunner).
+	if inputs := SecretInputsFromContext(ctx); len(inputs) > 0 && runnerops.VerbTakesSecretInputs(op.Verb) {
 		if r.ResolveSecret == nil {
 			return runnerops.Result{}, &CodedError{Code: runnerops.CodeSecretInputMissing,
 				Message: "exec runner has no secret resolver configured"}

@@ -39,6 +39,19 @@ const (
 	VerbEngineDestroy = "engine-destroy"
 )
 
+// VerbTakesSecretInputs reports whether an operation's properties can carry
+// secret inputs (valuesFrom). Read and delete address a resource by id only;
+// schema fetches have no properties at all. Engine verbs are included so the
+// runner can refuse them explicitly rather than silently drop the plan.
+func VerbTakesSecretInputs(verb string) bool {
+	switch verb {
+	case VerbCreate, VerbPatch, VerbEngineUp, VerbEngineDestroy:
+		return true
+	default:
+		return false
+	}
+}
+
 // Failure codes carried by Result.Code. They map 1:1 onto condition reasons
 // in the operator's status, so `kubectl get` tells the user what actually
 // went wrong.
