@@ -68,7 +68,8 @@ export default defineConfig({
       {
         text: 'Contributing',
         items: [
-          { text: 'Build from source', link: '/guide/build-from-source' }
+          { text: 'Build from source', link: '/guide/build-from-source' },
+          { text: 'Test a release end to end', link: '/guide/test-a-release' }
         ]
       }
     ],
