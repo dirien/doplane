@@ -69,6 +69,13 @@ type Op struct {
 	ID          string          `json:"id,omitempty"`
 	Properties  map[string]any  `json:"properties,omitempty"`
 	EngineState json.RawMessage `json:"engineState,omitempty"`
+	// State is the last recorded state of the resource a delete targets
+	// (the operator's status.outputs, with secret input paths removed by the
+	// caller). Stateless `pulumi do delete` reads the resource back before
+	// calling the provider and cannot proceed when that read is unsupported;
+	// with State the runner hands the provider the recorded state through an
+	// ephemeral engine instead (see executeStateDelete).
+	State map[string]any `json:"state,omitempty"`
 	// SecretInputs maps property paths to the names of environment
 	// variables holding their values. Only the mapping travels in the op
 	// document — the values reach the runner process out of band (kubelet

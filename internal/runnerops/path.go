@@ -176,6 +176,51 @@ func SetPath(props map[string]any, path string, value any) error {
 	return nil
 }
 
+// DeletePath removes the value at a dot path inside props: a map entry is
+// deleted, an array element is set to null (removing it would shift the
+// indexes of its siblings). The boolean reports whether the path existed;
+// an unparseable path is an error.
+func DeletePath(props map[string]any, path string) (bool, error) {
+	segs, err := parsePath(path)
+	if err != nil {
+		return false, err
+	}
+	if segs[0].isIdx {
+		return false, fmt.Errorf("path %q must start with a key", path)
+	}
+	var cur any = props
+	for i, seg := range segs {
+		last := i == len(segs)-1
+		switch node := cur.(type) {
+		case map[string]any:
+			if seg.isIdx {
+				return false, nil
+			}
+			next, ok := node[seg.key]
+			if !ok {
+				return false, nil
+			}
+			if last {
+				delete(node, seg.key)
+				return true, nil
+			}
+			cur = next
+		case []any:
+			if !seg.isIdx || seg.index >= len(node) {
+				return false, nil
+			}
+			if last {
+				node[seg.index] = nil
+				return true, nil
+			}
+			cur = node[seg.index]
+		default:
+			return false, nil
+		}
+	}
+	return false, nil
+}
+
 // GetPath reads the value at a dot path inside v. The boolean reports
 // whether the full path exists.
 func GetPath(v any, path string) (any, bool) {

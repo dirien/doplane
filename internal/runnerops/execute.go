@@ -176,7 +176,11 @@ func (r *Runner) executeDo(ctx context.Context, ws *workspace, op Op) Result {
 
 	stdout, runErr := r.run(ctx, ws, args...)
 	if runErr != nil {
-		return classifyDoFailure(runErr, stdout)
+		res := classifyDoFailure(runErr, stdout)
+		if op.Verb == VerbDelete && len(op.State) > 0 && deleteFallbackApplies(res) {
+			return r.executeStateDelete(ctx, ws, op, res)
+		}
+		return res
 	}
 	if op.Verb == VerbDelete {
 		return Result{OK: true, ID: op.ID}

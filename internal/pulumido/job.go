@@ -243,8 +243,8 @@ func (r *JobRunner) Read(ctx context.Context, token, pkg, id string) (map[string
 }
 
 // Delete implements Runner.
-func (r *JobRunner) Delete(ctx context.Context, token, pkg, id string) error {
-	_, err := r.executeOp(ctx, runnerops.Op{Verb: runnerops.VerbDelete, Token: token, Package: pkg, ID: id})
+func (r *JobRunner) Delete(ctx context.Context, token, pkg, id string, state map[string]any) error {
+	_, err := r.executeOp(ctx, runnerops.Op{Verb: runnerops.VerbDelete, Token: token, Package: pkg, ID: id, State: deleteState(state)})
 	return err
 }
 

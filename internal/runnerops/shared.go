@@ -29,6 +29,12 @@ import (
 // CR status; larger states would strain etcd object limits.
 const MaxEngineStateBytes = 900 * 1024
 
+// MaxDeleteStateBytes bounds the recorded state shipped with a delete
+// (Op.State). The op document travels to runner pods in one environment
+// variable; a state past this size is dropped by the caller so the delete
+// still runs — only the read-unsupported fallback becomes unavailable.
+const MaxDeleteStateBytes = 64 * 1024
+
 // PackageForToken derives the package name from a type token like
 // "aws:s3/bucketV2:BucketV2".
 func PackageForToken(token string) string {

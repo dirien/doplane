@@ -74,6 +74,9 @@ func (r *DoResourceReconciler) reconcileReplacement(ctx context.Context, res *do
 
 	log := logf.FromContext(ctx)
 	oldID := res.Status.ID
+	// The old resource's recorded state, captured before anything about
+	// the swap is persisted, so its delete can still run without a read.
+	oldState := deleteState(res)
 
 	// Create-before-delete keeps dependents working through the swap (no
 	// window without e.g. a bucket policy). Fixed-identity resources
@@ -82,7 +85,7 @@ func (r *DoResourceReconciler) reconcileReplacement(ctx context.Context, res *do
 	id, state, err := r.Runner.Create(ctx, token, pkg, props)
 	if pulumido.IsAlreadyExists(err) {
 		log.Info("identity conflict; replacing delete-before-create", "type", token, "id", oldID)
-		if derr := r.Runner.Delete(ctx, token, pkg, oldID); derr != nil && !errors.Is(derr, pulumido.ErrNotFound) {
+		if derr := r.Runner.Delete(ctx, token, pkg, oldID, oldState); derr != nil && !errors.Is(derr, pulumido.ErrNotFound) {
 			return r.markSyncFailed(ctx, res, "ReplaceFailed", derr, true)
 		}
 		// A crash from here recovers through the existing drift path: the
@@ -100,7 +103,7 @@ func (r *DoResourceReconciler) reconcileReplacement(ctx context.Context, res *do
 		return ctrl.Result{}, err
 	}
 	if id != oldID {
-		if derr := r.Runner.Delete(ctx, token, pkg, oldID); derr != nil && !errors.Is(derr, pulumido.ErrNotFound) {
+		if derr := r.Runner.Delete(ctx, token, pkg, oldID, oldState); derr != nil && !errors.Is(derr, pulumido.ErrNotFound) {
 			// The new resource is live; leaking the old one is recoverable
 			// by hand and better than failing the swap.
 			r.Recorder.Eventf(res, "Warning", "OrphanedOldResource",
