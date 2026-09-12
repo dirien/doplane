@@ -162,6 +162,12 @@ func TestJobNameSecretVersionSalt(t *testing.T) {
 	if again := r.jobName(WithSecretVersionSalt(ctx, "v2digest"), runnerops.VerbPatch, opJSON); again != rotated {
 		t.Fatalf("salted job name not stable: %q vs %q", rotated, again)
 	}
+	// Reads and deletes never consume secret inputs, so the salt the
+	// reconcile ctx still carries must not perturb their names.
+	const readJSON = `{"verb":"read","id":"x"}`
+	if r.jobName(ctx, runnerops.VerbRead, readJSON) != r.jobName(WithSecretVersionSalt(ctx, "v2digest"), runnerops.VerbRead, readJSON) {
+		t.Fatal("secret version salt must not change a read job's name")
+	}
 }
 
 func TestJobTTLSeconds(t *testing.T) {

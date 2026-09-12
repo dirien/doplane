@@ -336,7 +336,7 @@ func (r *DoResourceReconciler) reconcileDelete(ctx context.Context, res *dov1alp
 			// persisted checkpoint.
 			err = r.Runner.DeleteComponent(ctx, token, pkg, res.Status.EngineState.Raw)
 		} else {
-			err = r.Runner.Delete(ctx, token, pkg, res.Status.ID)
+			err = r.Runner.Delete(ctx, token, pkg, res.Status.ID, deleteState(res))
 		}
 		switch {
 		case err == nil:

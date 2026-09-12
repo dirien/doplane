@@ -45,6 +45,7 @@ type fakeRunner struct {
 	patched      []map[string]any
 	deleted      []string
 	deletedPkgs  []string
+	deletedState []map[string]any
 	patchErr     error
 	createErrs   []error // consumed one per Create call before succeeding
 
@@ -110,13 +111,19 @@ func (f *fakeRunner) Patch(_ context.Context, _, _, id string, props map[string]
 	return state, nil
 }
 
-func (f *fakeRunner) Read(_ context.Context, _, _, id string) (map[string]any, error) {
+func (f *fakeRunner) Read(_ context.Context, token, _, id string) (map[string]any, error) {
+	// Like the real CLI, a read returns the full recorded state, not just
+	// the id — status.outputs must survive the drift read intact.
+	if state, ok := f.created[token+"/"+id]; ok {
+		return maps.Clone(state), nil
+	}
 	return map[string]any{"id": id}, nil
 }
 
-func (f *fakeRunner) Delete(_ context.Context, _, pkg, id string) error {
+func (f *fakeRunner) Delete(_ context.Context, _, pkg, id string, state map[string]any) error {
 	f.deleted = append(f.deleted, id)
 	f.deletedPkgs = append(f.deletedPkgs, pkg)
+	f.deletedState = append(f.deletedState, state)
 	return nil
 }
 
@@ -236,8 +243,37 @@ var _ = Describe("DoResource Controller", func() {
 
 			reconcileN(1)
 			Expect(runner.deleted).To(ContainElement("fake-id-1"))
+			// The recorded state rides along so the runner can delete
+			// without reading the resource back.
+			Expect(runner.deletedState).To(HaveLen(1))
+			Expect(runner.deletedState[0]).To(HaveKeyWithValue("id", "fake-id-1"))
+			Expect(runner.deletedState[0]).To(HaveKeyWithValue("prefix", "doplane"))
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(errors.IsNotFound(err)).To(BeTrue())
+		})
+
+		It("should strip valuesFrom paths from the state handed to Delete", func() {
+			resource := &dov1alpha1.DoResource{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			resource.Spec.ValuesFrom = []dov1alpha1.ValueFrom{{
+				ToPath:       "prefix",
+				SecretKeyRef: dov1alpha1.SecretKeySelector{Name: "pet-naming", Key: "rotation"},
+			}}
+			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+			reconcileN(2)
+
+			updated := &dov1alpha1.DoResource{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, updated)).To(Succeed())
+			Expect(updated.Status.ID).To(Equal("fake-id-1"))
+			Expect(string(updated.Status.Outputs.Raw)).To(ContainSubstring(`"prefix"`),
+				"the recorded state echoes the substituted property")
+			Expect(k8sClient.Delete(ctx, updated)).To(Succeed())
+
+			reconcileN(1)
+			Expect(runner.deletedState).To(HaveLen(1))
+			Expect(runner.deletedState[0]).To(HaveKeyWithValue("id", "fake-id-1"))
+			Expect(runner.deletedState[0]).To(HaveKey("length"))
+			Expect(runner.deletedState[0]).NotTo(HaveKey("prefix"), "secret input paths never reach the Job spec")
 		})
 
 		It("should report UpdateNotSupported when the provider cannot patch in place", func() {

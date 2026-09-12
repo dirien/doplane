@@ -53,7 +53,8 @@ func (r *ExecRunner) execute(ctx context.Context, op runnerops.Op) (runnerops.Re
 	ctx, cancel := context.WithTimeout(ctx, r.timeout())
 	defer cancel()
 	ops := &runnerops.Runner{PulumiBin: r.PulumiBin}
-	if inputs := SecretInputsFromContext(ctx); len(inputs) > 0 {
+	// Only ops with properties consume the ctx's secret plan (see JobRunner).
+	if inputs := SecretInputsFromContext(ctx); len(inputs) > 0 && runnerops.VerbTakesSecretInputs(op.Verb) {
 		if r.ResolveSecret == nil {
 			return runnerops.Result{}, &CodedError{Code: runnerops.CodeSecretInputMissing,
 				Message: "exec runner has no secret resolver configured"}
@@ -107,8 +108,8 @@ func (r *ExecRunner) Read(ctx context.Context, token, pkg, id string) (map[strin
 }
 
 // Delete implements Runner.
-func (r *ExecRunner) Delete(ctx context.Context, token, pkg, id string) error {
-	_, err := r.execute(ctx, runnerops.Op{Verb: runnerops.VerbDelete, Token: token, Package: pkg, ID: id})
+func (r *ExecRunner) Delete(ctx context.Context, token, pkg, id string, state map[string]any) error {
+	_, err := r.execute(ctx, runnerops.Op{Verb: runnerops.VerbDelete, Token: token, Package: pkg, ID: id, State: deleteState(state)})
 	return err
 }
 
