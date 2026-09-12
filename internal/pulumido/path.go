@@ -32,6 +32,12 @@ func GetPath(v any, path string) (any, bool) {
 	return runnerops.GetPath(v, path)
 }
 
+// DeletePath removes the value at a dot path inside props; see
+// runnerops.DeletePath.
+func DeletePath(props map[string]any, path string) (bool, error) {
+	return runnerops.DeletePath(props, path)
+}
+
 // AppendKeySegment appends a map key to a path; see
 // runnerops.AppendKeySegment.
 func AppendKeySegment(base, key string) string {

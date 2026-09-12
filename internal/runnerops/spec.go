@@ -39,6 +39,19 @@ const (
 	VerbEngineDestroy = "engine-destroy"
 )
 
+// VerbTakesSecretInputs reports whether an operation's properties can carry
+// secret inputs (valuesFrom). Read and delete address a resource by id only;
+// schema fetches have no properties at all. Engine verbs are included so the
+// runner can refuse them explicitly rather than silently drop the plan.
+func VerbTakesSecretInputs(verb string) bool {
+	switch verb {
+	case VerbCreate, VerbPatch, VerbEngineUp, VerbEngineDestroy:
+		return true
+	default:
+		return false
+	}
+}
+
 // Failure codes carried by Result.Code. They map 1:1 onto condition reasons
 // in the operator's status, so `kubectl get` tells the user what actually
 // went wrong.
@@ -69,6 +82,13 @@ type Op struct {
 	ID          string          `json:"id,omitempty"`
 	Properties  map[string]any  `json:"properties,omitempty"`
 	EngineState json.RawMessage `json:"engineState,omitempty"`
+	// State is the last recorded state of the resource a delete targets
+	// (the operator's status.outputs, with secret input paths removed by the
+	// caller). Stateless `pulumi do delete` reads the resource back before
+	// calling the provider and cannot proceed when that read is unsupported;
+	// with State the runner hands the provider the recorded state through an
+	// ephemeral engine instead (see executeStateDelete).
+	State map[string]any `json:"state,omitempty"`
 	// SecretInputs maps property paths to the names of environment
 	// variables holding their values. Only the mapping travels in the op
 	// document — the values reach the runner process out of band (kubelet

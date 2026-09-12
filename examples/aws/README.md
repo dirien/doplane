@@ -96,7 +96,11 @@ kubectl get doresources | grep bkt-         # drains to empty; buckets deleted i
   id keep the emptied-state retry behavior until pulumi/pulumi#24188 lands.
   The examples sidestep the affected resources: EventBridge Scheduler with
   its inline target instead of a standalone eventTarget (17), inline SG rules
-  (19), and a deployment strategy instead of an environment (22).
+  (19), and a deployment strategy instead of an environment (22). Resources
+  whose provider cannot read them back at all (or rejects the stored id as
+  an import id) are deleted from the recorded `status.outputs` through an
+  ephemeral engine destroy instead — see "Delete without read" in the root
+  README.
 
   **Verified on the runner at pulumi 3.252.0** (the 3.256.0 bump changed
   delete-retry behavior only; 3.257–3.262 ship no stateless `do` read or

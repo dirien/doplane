@@ -56,7 +56,7 @@ state file. This operator turns that into a declarative control loop:
 | created | validate `spec.properties` against the provider's JSON schema from the Pulumi registry, then `pulumi do <type> create` |
 | spec changed | `pulumi do <type> patch <id>` |
 | periodic resync (10m) | `pulumi do <type> read <id>` — refreshed into `status.outputs`; a vanished resource is recreated |
-| deleted | finalizer runs `pulumi do <type> delete <id>` (unless `deletionPolicy: Orphan`) |
+| deleted | finalizer runs `pulumi do <type> delete <id>` (unless `deletionPolicy: Orphan`); providers that cannot read the resource back get the recorded state through an ephemeral engine destroy instead |
 
 The resulting resource state (id + all outputs) is stored on the CR's status
 subresource — etcd is the state store.
@@ -410,6 +410,16 @@ make run      # run the manager locally in exec mode (uses your pulumi login/env
   what this operator wants — status is the state. The image pins 3.262.0;
   since 3.256 it reports already-deleted resources as not-found on delete retries
   (pulumi/pulumi#24115).
+- **Delete without read.** Since 3.252 the stateless delete reads the
+  resource back (an import by id) before calling the provider, and gives up
+  when the provider has no read for the type (`random` pets and strings
+  with composite import ids, for example). The runner then falls back to
+  the recorded `status.outputs`: it imports a one-resource checkpoint into
+  a throwaway stack on the pod's file backend and runs `pulumi destroy`,
+  which hands the provider exactly the state a successful read would have.
+  `valuesFrom` paths are stripped from that state before it enters the Job
+  spec. Git and private-registry packages have no fallback (their plugin
+  only exists after `pulumi package add`).
 - The reconciler reads the primary object through the **live API reader**
   (not the informer cache) and persists status with conflict retries:
   Job-backed reconciles run for tens of seconds, and acting on a stale

@@ -97,8 +97,11 @@ type Runner interface {
 	Patch(ctx context.Context, token, pkg, id string, props map[string]any) (map[string]any, error)
 	// Read fetches the current state of an existing resource.
 	Read(ctx context.Context, token, pkg, id string) (map[string]any, error)
-	// Delete removes the external resource.
-	Delete(ctx context.Context, token, pkg, id string) error
+	// Delete removes the external resource. state is its last recorded
+	// state (status.outputs with secret input paths removed) or nil; with
+	// it the runner can still delete resources whose provider cannot read
+	// them back, which the stateless `pulumi do delete` requires.
+	Delete(ctx context.Context, token, pkg, id string, state map[string]any) error
 	// FetchSchema retrieves the provider schema (at minimum covering token)
 	// from the Pulumi registry.
 	FetchSchema(ctx context.Context, pkg, token string) (*PackageSchema, error)
@@ -150,6 +153,21 @@ func decodeEnvelope(out string) (runnerops.Result, error) {
 		return runnerops.Result{}, fmt.Errorf("runner output is not a result envelope (output: %s)", runnerops.Truncate(out, 2000))
 	}
 	return res, nil
+}
+
+// deleteState bounds the recorded state shipped with a delete. The op
+// document reaches runner pods in a single environment variable, so an
+// oversized state is dropped rather than failing the delete: the stateless
+// path still runs, only the read-unsupported fallback becomes unavailable.
+func deleteState(state map[string]any) map[string]any {
+	if len(state) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(state)
+	if err != nil || len(raw) > runnerops.MaxDeleteStateBytes {
+		return nil
+	}
+	return state
 }
 
 // engineStateJSON validates and normalizes an engine checkpoint for the op.

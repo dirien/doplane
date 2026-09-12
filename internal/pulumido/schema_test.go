@@ -44,7 +44,7 @@ func (c *countingRunner) Patch(context.Context, string, string, string, map[stri
 func (c *countingRunner) Read(context.Context, string, string, string) (map[string]any, error) {
 	return nil, errors.New("not implemented")
 }
-func (c *countingRunner) Delete(context.Context, string, string, string) error {
+func (c *countingRunner) Delete(context.Context, string, string, string, map[string]any) error {
 	return errors.New("not implemented")
 }
 

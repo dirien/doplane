@@ -82,6 +82,71 @@ func TestPathQuotedSegments(t *testing.T) {
 	}
 }
 
+func TestDeletePath(t *testing.T) {
+	fresh := func() map[string]any {
+		return map[string]any{
+			"id":      "x",
+			"keepers": map[string]any{"rotation": "secret", "other": "keep"},
+			"rules":   []any{map[string]any{"token": "secret"}, "second"},
+		}
+	}
+	cases := []struct {
+		path    string
+		found   bool
+		wantErr bool
+		check   func(t *testing.T, props map[string]any)
+	}{
+		{path: "keepers.rotation", found: true, check: func(t *testing.T, props map[string]any) {
+			keepers, _ := props["keepers"].(map[string]any)
+			if _, ok := keepers["rotation"]; ok {
+				t.Error("rotation still present")
+			}
+			if keepers["other"] != "keep" {
+				t.Error("sibling key lost")
+			}
+		}},
+		{path: "rules[0].token", found: true, check: func(t *testing.T, props map[string]any) {
+			rules, _ := props["rules"].([]any)
+			if _, ok := rules[0].(map[string]any)["token"]; ok {
+				t.Error("token still present")
+			}
+		}},
+		{path: "rules[1]", found: true, check: func(t *testing.T, props map[string]any) {
+			rules, _ := props["rules"].([]any)
+			if len(rules) != 2 || rules[1] != nil {
+				t.Errorf("array element must be nulled, not removed: %v", rules)
+			}
+		}},
+		{path: "keepers.missing", found: false},
+		{path: "missing.deep", found: false},
+		{path: "id.sub", found: false},
+		{path: "rules[9]", found: false},
+		{path: "[0]", wantErr: true},
+		{path: "keepers[", wantErr: true},
+	}
+	for _, c := range cases {
+		t.Run(c.path, func(t *testing.T) {
+			props := fresh()
+			found, err := DeletePath(props, c.path)
+			if c.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if found != c.found {
+				t.Errorf("found = %v, want %v", found, c.found)
+			}
+			if c.check != nil {
+				c.check(t, props)
+			}
+		})
+	}
+}
+
 func TestGetPathMissing(t *testing.T) {
 	v := map[string]any{"a": map[string]any{"b": "c"}}
 	if _, ok := GetPath(v, "a.x"); ok {
