@@ -511,10 +511,14 @@ kubectl get doresource pet-dependent -o jsonpath='{.status.outputs.id}{"\n"}'
 # Example 06: an array output travelled through a reference.
 kubectl get doresource graph-shuffle -o jsonpath='{.status.outputs.results}{"\n"}'
 
-# Example 11: the connection Secret was published from status; the input
-# Secret value never appears in the object, its events or the Job spec.
+# Example 11: the connection Secret was published from status. The input
+# value is absent from the spec and from events. The random provider does
+# echo it back in status.outputs (its keepers map), which is why the docs
+# call status sensitive-adjacent; see Security and tenancy.
 kubectl get secret pet-connection -o jsonpath='{.data.petName}' | base64 -d; echo
-kubectl get doresource pet-secretive -o yaml | grep -c super-secret-rotation-token   # 0
+kubectl get doresource pet-secretive -o jsonpath='{.spec.properties}'; echo        # length and prefix only
+kubectl get events --field-selector involvedObject.name=pet-secretive -o json \
+  | grep -c super-secret-rotation-token                                              # 0
 
 # Example 14: typed parameters kept their native types on the way in.
 kubectl get doresource payments-prod-pet -o jsonpath='{.spec.properties.length}{"\n"}'   # a number, not a string
