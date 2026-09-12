@@ -8,6 +8,7 @@ const pages = [
   ['Discover providers and components', 'guide/discover.md'],
   ['Choose an API', 'guide/choose-an-api.md'],
   ['Build from source', 'guide/build-from-source.md'],
+  ['Test a release end to end', 'guide/test-a-release.md'],
   ['Control loop and state', 'concepts/control-loop.md'],
   ['Dependencies and composites', 'concepts/dependencies.md'],
   ['Day-2 operations', 'operations/day-2.md'],
