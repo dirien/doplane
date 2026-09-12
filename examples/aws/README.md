@@ -80,7 +80,7 @@ kubectl get doresources | grep bkt-         # drains to empty; buckets deleted i
   inline freely). Policies needing two sibling ARNs are reduced to one source;
   where ordering matters, a resource references an upstream *policy's* output
   (which echoes the ARN) to both get the value and gate creation order.
-- **Stateless delete.** The runner pins `pulumi` **3.256.0**. Since 3.252,
+- **Stateless delete.** The runner pins `pulumi` **3.262.0**. Since 3.252,
   delete reads the resource back first (pulumi/pulumi#23837), so shapes that
   need input state on delete — IAM attachments, instance profiles, roles with
   managed/inline policies, SSM parameters, Route 53 records, EC2 routes, log
@@ -98,8 +98,9 @@ kubectl get doresources | grep bkt-         # drains to empty; buckets deleted i
   its inline target instead of a standalone eventTarget (17), inline SG rules
   (19), and a deployment strategy instead of an environment (22).
 
-  **Verified on the runner at pulumi 3.252.0** (the 3.256.0 bump changes
-  delete-retry behavior only): all 26 examples create
+  **Verified on the runner at pulumi 3.252.0** (the 3.256.0 bump changed
+  delete-retry behavior only; 3.257–3.262 ship no stateless `do` read or
+  delete changes): all 26 examples create
   **and** delete cleanly, both stacks each, against a live AWS account. The
   component (26) runs the **stateful** engine and never depended on the
   stateless-delete behavior.
