@@ -161,7 +161,7 @@ kubectl get serviceidentity payments-prod -o jsonpath='{.status.outputs.tokenLen
 
 ### Teardown
 
-Delete in reverse order. Each file's `kubectl delete -f` returns once the finalizers have run, so a hang here is a failure, not slowness:
+Delete in reverse order. A `DoResource` is only gone once its finalizer has deleted the external resource, so `kubectl delete -f` on the raw-resource files returns when the provider deletes are done, and a hang there is a failure. A composite is different: the `DoComposite` (or typed object) disappears at once and its children drain in the background, in reverse dependency order, through garbage collection. After deleting composite files, wait until `kubectl get doresources` is empty before judging the result:
 
 ```sh
 for f in 14-platform-api-parameters 10-cataloged-composite 11-secrets-in-and-out \
@@ -237,6 +237,7 @@ Teardown drains in reverse dependency order and must end empty:
 
 ```sh
 for f in examples/aws/[0-2][0-9]-*.yaml; do kubectl delete -f "$f" --wait=true --timeout=10m; done
+kubectl get doresources -w               # composites' children drain in the background; wait for an empty list
 kubectl get doresources,docomposites -A  # No resources found
 ```
 
@@ -274,7 +275,10 @@ kubectl get docomposite do-web-dev -w    # 7/7 READY
 kubectl get webnodes                     # web-typed READY True, URL column filled
 curl -sI "$(kubectl get webnode web-typed -o jsonpath='{.status.outputs.url}')" | head -1   # HTTP/1.1 200 OK once cloud-init finished nginx
 kubectl delete -f examples/07-digitalocean-web-node.yaml --wait=true --timeout=10m
+kubectl get doresources -w               # children drain in dependency order; stop when the list is empty
 ```
+
+Both droplets, VPCs, projects, tags and firewalls are gone from the account once the list is empty; `doctl compute droplet list` and `doctl vpcs list` confirm it.
 
 If you have not run the AWS sync, create the Secret with the token alone instead of patching a Secret that does not exist yet:
 
