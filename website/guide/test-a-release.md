@@ -57,6 +57,13 @@ kubectl -n doplane-system rollout status deployment/doplane-controller-manager -
 
 The runner image is large (it carries the Pulumi CLI, language toolchains and baked provider plugins), so the first runner Job on a node spends a minute or two pulling it. That happens once per node.
 
+A runner Job has a ten-minute deadline that includes the pull. On a slow link the first Jobs can die with `DeadlineExceeded` before the image arrives, and the resources they served report `SchemaUnavailable` or `OperationFailed` until the retries find the cached image. That is noise, not a defect in the release, but it spoils a timed run. On kind, pull the image once on the host and load it into the node before applying anything:
+
+```sh
+docker pull ghcr.io/dirien/doplane-runner:0.3.0
+kind load docker-image ghcr.io/dirien/doplane-runner:0.3.0 --name doplane
+```
+
 Confirm the install before applying anything:
 
 ```sh

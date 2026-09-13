@@ -427,6 +427,13 @@ kubectl -n doplane-system rollout status deployment/doplane-controller-manager -
 
 The runner image is large (it carries the Pulumi CLI, language toolchains and baked provider plugins), so the first runner Job on a node spends a minute or two pulling it. That happens once per node.
 
+A runner Job has a ten-minute deadline that includes the pull. On a slow link the first Jobs can die with `DeadlineExceeded` before the image arrives, and the resources they served report `SchemaUnavailable` or `OperationFailed` until the retries find the cached image. That is noise, not a defect in the release, but it spoils a timed run. On kind, pull the image once on the host and load it into the node before applying anything:
+
+```sh
+docker pull ghcr.io/dirien/doplane-runner:0.3.0
+kind load docker-image ghcr.io/dirien/doplane-runner:0.3.0 --name doplane
+```
+
 Confirm the install before applying anything:
 
 ```sh
@@ -982,6 +989,29 @@ kubectl get docomposite <name> \
 ```
 
 For a manual rollout, set `spec.revisionRef.name` to the reviewed revision. Verify each rendered child, not only the composite roll-up.
+
+## Upgrade doplane
+
+The chart ships its CRDs in the `crds/` directory, which Helm installs on the first `helm install` and never touches again. A release that adds CRD fields (0.3.0 added `spec.outputs`, `spec.api.additionalPrinterColumns` and `status.outputs` to the composite kinds) therefore needs the CRDs applied by hand before the manager is upgraded; otherwise the apiserver silently prunes the new fields the new manager writes.
+
+```sh
+helm pull oci://ghcr.io/dirien/charts/doplane --version <x.y.z> --untar --untardir /tmp/doplane-<x.y.z>
+kubectl apply --server-side --force-conflicts -f /tmp/doplane-<x.y.z>/doplane/crds/
+
+helm upgrade doplane oci://ghcr.io/dirien/charts/doplane --version <x.y.z> \
+  --namespace doplane-system --reuse-values
+
+kubectl -n doplane-system rollout status deployment/doplane-controller-manager --timeout=3m
+```
+
+`--force-conflicts` is needed because Helm registered itself as the field manager of the CRDs it installed; server-side apply refuses to overwrite another manager's fields without it. CRD changes are additive across releases, so existing objects are unaffected. `--reuse-values` keeps the values you set at install time; add `--set` for anything new, for example a platform group for the allowlist.
+
+Running resources are not touched by the upgrade. Runner Jobs use the new runner image from their next operation on, and a node that has not pulled it yet spends its first Job doing so.
+
+```sh
+helm list -n doplane-system                              # CHART and APP VERSION match the release
+kubectl explain docompositedefinition.spec.outputs       # present once the CRDs are updated
+```
 
 ## Escalation data
 
