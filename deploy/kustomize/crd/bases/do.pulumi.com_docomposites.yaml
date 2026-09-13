@@ -157,6 +157,13 @@ spec:
                 description: ObservedGeneration is the composite generation last rendered.
                 format: int64
                 type: integer
+              outputs:
+                description: |-
+                  Outputs holds the definition's spec.outputs rendered against the
+                  parameters and the children's observed state. Keys whose sources are
+                  not yet available are absent. Sensitive-adjacent, like a DoResource's
+                  status.outputs.
+                x-kubernetes-preserve-unknown-fields: true
               readyResources:
                 description: |-
                   ReadyResources counts children whose Ready condition is True,

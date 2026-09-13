@@ -267,34 +267,41 @@ func renderString(rc *renderContext, s, path string, refs *[]dov1alpha1.Referenc
 	result = strings.ReplaceAll(result, "${value}", "$${value}")
 	result = strings.ReplaceAll(result, valueMarker, "${value}")
 
-	// resources.<name>.id or resources.<name>.outputs.<path>
-	rest := strings.TrimPrefix(resourceExpr, "resources.")
-	parts := strings.SplitN(rest, ".", 2)
-	childName, ok := rc.childName[parts[0]]
-	if !ok {
-		return nil, fmt.Errorf("expression ${%s}: unknown resource %q", resourceExpr, parts[0])
-	}
-	if len(parts) < 2 {
-		return nil, fmt.Errorf("expression ${%s}: missing field (use .id or .outputs.<path>)", resourceExpr)
-	}
-	var fieldPath string
-	switch {
-	case parts[1] == "id":
-		fieldPath = "status.id"
-	case parts[1] == "outputs" || strings.HasPrefix(parts[1], "outputs."):
-		fieldPath = "status." + parts[1]
-	default:
-		return nil, fmt.Errorf("expression ${%s}: field must be id or outputs.<path>", resourceExpr)
+	source, fieldPath, err := parseResourceExpr(rc, resourceExpr)
+	if err != nil {
+		return nil, err
 	}
 	ref := dov1alpha1.Reference{
 		ToPath: path,
-		From:   dov1alpha1.ReferenceSource{Name: childName, FieldPath: fieldPath},
+		From:   dov1alpha1.ReferenceSource{Name: rc.childName[source], FieldPath: fieldPath},
 	}
 	if result != "${value}" {
 		ref.Template = result
 	}
 	*refs = append(*refs, ref)
 	return removedValue, nil
+}
+
+// parseResourceExpr splits a "resources.<name>.id" or
+// "resources.<name>.outputs.<path>" expression into the template resource
+// name and the status field path to read from that child.
+func parseResourceExpr(rc *renderContext, expr string) (source, fieldPath string, err error) {
+	rest := strings.TrimPrefix(expr, "resources.")
+	parts := strings.SplitN(rest, ".", 2)
+	if _, ok := rc.childName[parts[0]]; !ok {
+		return "", "", fmt.Errorf("expression ${%s}: unknown resource %q", expr, parts[0])
+	}
+	if len(parts) < 2 {
+		return "", "", fmt.Errorf("expression ${%s}: missing field (use .id or .outputs.<path>)", expr)
+	}
+	switch {
+	case parts[1] == "id":
+		return parts[0], fieldPathID, nil
+	case parts[1] == "outputs" || strings.HasPrefix(parts[1], "outputs."):
+		return parts[0], "status." + parts[1], nil
+	default:
+		return "", "", fmt.Errorf("expression ${%s}: field must be id or outputs.<path>", expr)
+	}
 }
 
 // checkUnterminated rejects strings with a "${" that never closes: silently

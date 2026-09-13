@@ -14,13 +14,13 @@ the registry token and a kubeconfig for the runner:
 | 4 | `04-composite-definition.yaml` | platform-owned `DoCompositeDefinition`: 4-resource, 2-provider DAG |
 | 5 | `05-composite-instance.yaml` | app-team `DoComposite`: 1 object in, 4 `DoResource` children out — each visible via kubectl |
 | 6 | `06-reference-fan-in.yaml` | no-cloud fan-in graph: object paths, array paths and downstream propagation |
-| 7 | `07-digitalocean-web-node.yaml` | DigitalOcean composite: VPC, tag, Droplet, firewall, project assignment |
+| 7 | `07-digitalocean-web-node.yaml` | DigitalOcean composite: VPC, tag, Droplet, firewall, project assignment — served as `kind: WebNode` in `web.ediri.io` (needs the `compositeApiGroups` allowlist) with the nginx URL as an output and printer column |
 | 8 | `08-private-registry-component.yaml` | COMPONENT from the Pulumi Cloud private registry (`private/ediri/web-app`), orchestrated by an ephemeral engine; checkpoint persisted in `status.engineState` |
 | 9 | `09-provider-profile.yaml` | `DoProvider` profile: platform-pinned package, allow-list enforcement, `providerRef` on raw resources — no cloud account needed |
-| 10 | `10-cataloged-composite.yaml` | the full provider UX: profile + cataloged composite served as its own typed platform API (`kind: PetIdentity`, schema-validated at admission) — no cloud account needed |
+| 10 | `10-cataloged-composite.yaml` | the full provider UX: profile + cataloged composite served as its own typed platform API (`kind: PetIdentity`, schema-validated at admission) with `outputs` on status and an IDENTITY printer column — no cloud account needed |
 | 11 | `11-secrets-in-and-out.yaml` | `valuesFrom` secret inputs (value kept out of manifests, events and logs; never in identity-forming properties) + `writeConnectionSecretToRef` connection secret — no cloud account needed |
 | 12 | `12-typed-private-registry-component-provider.yaml` + `13-typed-private-registry-component.yaml` | component package schema exposed as a generated typed CRD; typed object drives the component engine |
-| 14 | `14-platform-api-parameters.yaml` | typed platform API with a full parameter surface (string, enum, integer, boolean); whole-string `${params.*}` expressions keep native types — no cloud account needed |
+| 14 | `14-platform-api-parameters.yaml` | typed platform API with a full parameter surface (string, enum, integer, boolean); whole-string `${params.*}` expressions keep native types, and so do the definition's typed and nested `outputs` — no cloud account needed |
 
 Generated help for any resource type (required/optional inputs, reference
 paths, example YAML):

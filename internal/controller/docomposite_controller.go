@@ -18,10 +18,13 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -117,6 +120,7 @@ func (r *DoCompositeReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// Apply children and collect their observed state.
 	statuses := make([]dov1alpha1.CompositeResourceStatus, 0, len(children))
+	observed := make(map[string]*dov1alpha1.DoResource, len(children))
 	ready := 0
 	replacing := false
 	keep := map[string]struct{}{}
@@ -140,7 +144,15 @@ func (r *DoCompositeReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		if st.status.Ready {
 			ready++
 		}
+		if st.observed != nil {
+			observed[desired.Labels[labelCompositeItem]] = st.observed
+		}
 		statuses = append(statuses, st.status)
+	}
+
+	pendingOutputs, err := r.publishOutputs(comp, effective, observed)
+	if err != nil {
+		return r.markCompositeFailed(ctx, comp, "RenderFailed", err)
 	}
 
 	// Prune children removed from the definition. The composite label is
@@ -174,16 +186,7 @@ func (r *DoCompositeReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	comp.Status.Revision = revision.Name
 	comp.Status.ObservedGeneration = comp.Generation
 	setCompositeCondition(comp, dov1alpha1.ConditionSynced, metav1.ConditionTrue, "Synced", "definition rendered and children applied")
-	switch {
-	case replacing:
-		setCompositeCondition(comp, dov1alpha1.ConditionReady, metav1.ConditionFalse, "ReplacingChildren",
-			"waiting for replaced child resources to finish deleting")
-	case ready == len(children):
-		setCompositeCondition(comp, dov1alpha1.ConditionReady, metav1.ConditionTrue, "Available", "all child resources are ready")
-	default:
-		setCompositeCondition(comp, dov1alpha1.ConditionReady, metav1.ConditionFalse, "ChildrenNotReady",
-			fmt.Sprintf("%d of %d child resources ready", ready, len(children)))
-	}
+	setCompositeReadiness(comp, ready, len(children), replacing, pendingOutputs)
 	if err := r.persistCompositeStatus(ctx, comp); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -196,14 +199,60 @@ func (r *DoCompositeReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	return ctrl.Result{}, nil
 }
 
+// publishOutputs renders the definition's outputs against the children's
+// observed state into comp.Status.Outputs. A source that is not there yet
+// leaves its output absent rather than publishing a partial value; the
+// returned list names those pending outputs for the Ready message. The
+// error is a definition bug (RenderFailed).
+func (r *DoCompositeReconciler) publishOutputs(comp *dov1alpha1.DoComposite, def *dov1alpha1.DoCompositeDefinition,
+	observed map[string]*dov1alpha1.DoResource,
+) ([]string, error) {
+	outputs, pending, err := renderOutputs(comp, def, observed)
+	if err != nil {
+		return nil, err
+	}
+	comp.Status.Outputs = nil
+	if len(outputs) > 0 {
+		raw, err := json.Marshal(outputs)
+		if err != nil {
+			return nil, fmt.Errorf("marshaling outputs: %w", err)
+		}
+		comp.Status.Outputs = &apiextensionsv1.JSON{Raw: raw}
+	}
+	return pending, nil
+}
+
+// setCompositeReadiness rolls the children's readiness up into the Ready
+// condition. Readiness follows the children only; outputs still waiting for
+// a source are reported in the message, not as a readiness failure.
+func setCompositeReadiness(comp *dov1alpha1.DoComposite, ready, total int, replacing bool, pendingOutputs []string) {
+	switch {
+	case replacing:
+		setCompositeCondition(comp, dov1alpha1.ConditionReady, metav1.ConditionFalse, "ReplacingChildren",
+			"waiting for replaced child resources to finish deleting")
+	case ready == total:
+		msg := "all child resources are ready"
+		if len(pendingOutputs) > 0 {
+			msg += "; outputs pending: " + strings.Join(pendingOutputs, ", ")
+		}
+		setCompositeCondition(comp, dov1alpha1.ConditionReady, metav1.ConditionTrue, "Available", msg)
+	default:
+		setCompositeCondition(comp, dov1alpha1.ConditionReady, metav1.ConditionFalse, "ChildrenNotReady",
+			fmt.Sprintf("%d of %d child resources ready", ready, total))
+	}
+}
+
 // errApplyChild wraps child apply failures so the caller can distinguish
 // them (terminal ApplyFailed condition) from transient client errors.
 var errApplyChild = errors.New("applying child DoResource")
 
-// childApplyResult reports one child's reconciliation outcome.
+// childApplyResult reports one child's reconciliation outcome. observed is
+// the child as last read (nil while it is being replaced), the state
+// outputs resolve against.
 type childApplyResult struct {
 	status    dov1alpha1.CompositeResourceStatus
 	replacing bool
+	observed  *dov1alpha1.DoResource
 }
 
 // applyChild creates or updates one child DoResource. spec.type is
@@ -284,6 +333,7 @@ func (r *DoCompositeReconciler) applyChild(ctx context.Context, comp *dov1alpha1
 			Ready:        meta.IsStatusConditionTrue(child.Status.Conditions, dov1alpha1.ConditionReady),
 			ID:           child.Status.ID,
 		},
+		observed: child,
 	}, nil
 }
 

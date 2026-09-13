@@ -101,6 +101,41 @@ while parameters inside longer strings interpolate as text.
 exercises a full surface — string, enum, integer and boolean — through one
 typed kind.
 
+## Expose outputs
+
+A platform kind is only half useful if consumers have to dig through child objects for the URL or the ID they came for. `spec.outputs` on the definition declares what every instance publishes, using the same expressions templates use, and doplane writes the resolved values to `status.outputs` on the `DoComposite` and on the typed object:
+
+```yaml
+spec:
+  api:
+    group: web.ediri.io
+    kind: WebNode
+    additionalPrinterColumns:
+      - name: URL
+        type: string
+        jsonPath: .status.outputs.url
+  outputs:
+    url: http://${resources.droplet.outputs.ipv4Address}
+    ipv4Address: ${resources.droplet.outputs.ipv4Address}
+    identity: ${resources.pet.id}-${resources.suffix.outputs.result}
+    connection:
+      env: ${params.env}
+      port: ${resources.droplet.outputs.port}
+```
+
+The rules differ from template properties in two ways that matter here. One output string may combine any number of sibling sources, because outputs are resolved by the composite controller itself rather than compiled into references. And a value that is exactly one expression keeps the source's type, so an integer output stays an integer and a nested object arrives as an object. Objects and arrays are allowed as output values.
+
+An output whose source is not available yet (the child is still being created, or the provider has not reported that field) is left out rather than published half-rendered. The Ready condition stays driven by the children alone and lists what is still pending, so `Ready=True` with `outputs pending: url (droplet: status.outputs.ipv4Address not yet available)` in the message is a normal intermediate state, not a failure. As soon as the child reports the field, the output appears.
+
+```sh
+kubectl get webnodes                                   # URL column filled once the droplet has an IP
+kubectl get webnode web-typed -o jsonpath='{.status.outputs}'
+```
+
+`additionalPrinterColumns` takes the same fields as a CRD's printer columns and places them before AGE. A column named like a built-in (`READY`, `SYNCED`, `REASON`, `AGE`) is rejected with `InvalidSchema`, as is an output naming a resource the definition does not declare or a parameter the schema would prune.
+
+Outputs are stored on the object like a `DoResource`'s `status.outputs` and are just as sensitive-adjacent. Do not route a secret value through an output; publish it from the child with `writeConnectionSecretToRef` instead.
+
 ## Evolve an API
 
 Versioning follows the Crossplane model. Generated CRDs always use conversion strategy `None`, so every served version must stay round-trippable: adding an optional parameter is a version bump; a new required parameter is a new API, not a new version.

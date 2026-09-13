@@ -1,22 +1,58 @@
-# Level 7 — DigitalOcean graph (requires DIGITALOCEAN_TOKEN in the
-# provider-credentials Secret). This creates billable infrastructure: a
-# small Droplet plus no/low-cost support resources. Delete the composite
-# when you are done.
+# Level 7 — DigitalOcean graph, served as a typed platform API with
+# outputs (requires a DigitalOcean token in the provider-credentials
+# Secret). This creates billable infrastructure: a small Droplet plus
+# no/low-cost support resources per instance. Delete the instances when you
+# are done.
 #
 #   suffix ─┬─> tag ─────┬─> droplet ──> project-assignment
 #           │            └─> firewall
 #           ├─> vpc ─────────┘
 #           └─> project ─────> project-assignment
 #
-# DigitalOcean credentials:
-#   kubectl create secret generic provider-credentials \
-#     --from-literal=DIGITALOCEAN_TOKEN="$DIGITALOCEAN_TOKEN" \
-#     --dry-run=client -o yaml | kubectl apply -f -
+# The definition publishes outputs — the nginx URL, the droplet's public
+# IP and its URN — on every instance's status.outputs, and serves the graph
+# as `kind: WebNode` in the platform group web.ediri.io with a URL printer
+# column. That group has to be on the operator's install-time allowlist:
+#
+#   helm upgrade doplane oci://ghcr.io/dirien/charts/doplane \
+#     --namespace doplane-system --reuse-values \
+#     --set 'compositeApiGroups={web.ediri.io}'
+#
+# DigitalOcean credentials (the provider reads DIGITALOCEAN_TOKEN or
+# DIGITALOCEAN_ACCESS_TOKEN):
+#   kubectl -n doplane-system create secret generic provider-credentials \
+#     --from-literal=DIGITALOCEAN_TOKEN="$DIGITALOCEAN_TOKEN"
 apiVersion: do.pulumi.com/v1alpha1
 kind: DoCompositeDefinition
 metadata:
   name: digitalocean-web-node
 spec:
+  api:
+    group: web.ediri.io
+    kind: WebNode
+    parametersSchema:
+      type: object
+      required:
+        - env
+      properties:
+        env:
+          type: string
+          enum:
+            - dev
+            - staging
+            - prod
+        region:
+          type: string
+          default: nyc3
+    additionalPrinterColumns:
+      - name: URL
+        type: string
+        jsonPath: .status.outputs.url
+  outputs:
+    url: http://${resources.droplet.outputs.ipv4Address}
+    ipv4Address: ${resources.droplet.outputs.ipv4Address}
+    dropletUrn: ${resources.droplet.outputs.dropletUrn}
+    project: ${resources.project.id}
   resources:
     - name: suffix
       type: random:index/randomString:RandomString
@@ -40,7 +76,8 @@ spec:
       properties:
         name: ${self.name}-${params.env}-${resources.suffix.outputs.result}
         region: ${params.region}
-        ipRange: 10.42.0.0/24
+        # No ipRange: DigitalOcean picks a free range per VPC, so several
+        # instances can share a region (a fixed range would collide).
         description: Managed by doplane
     - name: project
       type: digitalocean:index/project:Project
@@ -111,6 +148,8 @@ spec:
         resources:
           - ${resources.droplet.outputs.dropletUrn}
 ---
+# Raw composite instance: parameters are passed to the definition directly.
+# Both instances below create their own Droplet.
 apiVersion: do.pulumi.com/v1alpha1
 kind: DoComposite
 metadata:
@@ -120,3 +159,15 @@ spec:
   parameters:
     env: dev
     region: nyc3
+---
+# Typed instance of the same definition through the platform API. The
+# apiserver enforces the parameter schema (env enum, region default), and
+# `kubectl get webnodes` shows the nginx URL once the droplet reports its IP.
+# (Wait for the API to be served first:
+#   kubectl wait --for=condition=Established crd/webnodes.web.ediri.io --timeout=1m)
+apiVersion: web.ediri.io/v1alpha1
+kind: WebNode
+metadata:
+  name: web-typed
+spec:
+  env: staging

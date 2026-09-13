@@ -361,6 +361,18 @@ var _ = Describe("Typed managed resources and composite APIs", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(k8sClient.Get(ctx, key, typed)).To(Succeed())
 		Expect(typed.GetResourceVersion()).To(Equal(rv))
+
+		// Outputs published on the mirror composite surface on the typed object.
+		mirror.Status.Outputs = &apiextensionsv1.JSON{Raw: []byte(`{"url":"http://203.0.113.9","port":80}`)}
+		Expect(k8sClient.Status().Update(ctx, mirror)).To(Succeed())
+		_, err = rec.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(k8sClient.Get(ctx, key, typed)).To(Succeed())
+		outputs, found, err := unstructured.NestedMap(typed.Object, "status", "outputs")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue(), "status.outputs must be mirrored")
+		Expect(outputs).To(HaveKeyWithValue("url", "http://203.0.113.9"))
+		Expect(outputs).To(HaveKeyWithValue("port", BeNumerically("==", 80)))
 	})
 
 	It("refuses to adopt a DoComposite it does not control", func() {

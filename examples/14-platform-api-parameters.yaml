@@ -50,6 +50,15 @@ spec:
           maximum: 5
         upperToken:
           type: boolean
+  # Outputs keep native types the same way parameters do: a whole-string
+  # expression over an integer output stays an integer.
+  outputs:
+    identity: ${resources.pet.id}
+    tokenLength: ${resources.token.outputs.length}
+    connection:
+      team: ${params.team}
+      env: ${params.env}
+      token: ${resources.token.outputs.result}
   resources:
     - name: pet
       type: random:index/randomPet:RandomPet

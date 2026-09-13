@@ -67,6 +67,8 @@ spec:
 
 Every child remains observable with `kubectl get doresources`. Use the composite's `status.resources`, `status.readyResources`, and `status.revision` for the roll-up view.
 
+The same expressions also drive a definition's `spec.outputs`, which land on the composite's `status.outputs` (and on the typed object when the definition serves a platform API). Outputs are resolved by the composite controller against the children's observed state instead of being compiled into references, so one output string may combine several siblings. See [Expose outputs](/guide/platform-apis#expose-outputs).
+
 ## Revision safety
 
 Every definition edit creates an immutable `DoCompositeDefinitionRevision`.
