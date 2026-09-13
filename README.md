@@ -148,8 +148,11 @@ Platform teams define a graph once (`DoCompositeDefinition`, cluster-scoped);
 app teams instantiate it with one object (`DoComposite`). Every rendered
 child is a normal DoResource you can `kubectl get` individually; sibling
 expressions compile into references so the graph engine handles ordering.
-See `examples/` for a walkthrough from a single resource to a
-cross-provider composite DAG.
+A definition's `spec.outputs` publishes what consumers need — a URL built
+from a droplet's IP, an identity combining two siblings — on each
+instance's `status.outputs`, using the same expressions as templates. See
+`examples/` for a walkthrough from a single resource to a cross-provider
+composite DAG.
 
 ## Provider onboarding
 
@@ -235,6 +238,9 @@ product; `DoComposite` remains as visible machinery for debugging.
 - The reserved `spec.doplane` block on typed objects carries doplane's
   lifecycle knobs (`updatePolicy`, `revisionRef`) — full parity with raw
   DoComposites; a parameter named `doplane` is rejected.
+- `spec.outputs` on the definition lands on the typed object's
+  `status.outputs`, and `spec.api.additionalPrinterColumns` puts an output
+  (say, the URL) into `kubectl get` next to READY/SYNCED/REASON.
 - `kubectl get docd` shows the serving state (`APIServed` condition:
   `Served`, `InvalidSchema`, `GroupNotAllowed`, `CRDConflict`,
   `StoredVersionInUse`) plus per-version object counts.

@@ -48,7 +48,7 @@ Pin the version you are testing. The chart's `appVersion` selects the manager an
 
 ```sh
 helm install doplane oci://ghcr.io/dirien/charts/doplane \
-  --version 0.2.0 \
+  --version 0.3.0 \
   --namespace doplane-system \
   --create-namespace
 
@@ -60,7 +60,7 @@ The runner image is large (it carries the Pulumi CLI, language toolchains and ba
 Confirm the install before applying anything:
 
 ```sh
-helm list -n doplane-system                       # STATUS deployed, APP VERSION 0.2.0
+helm list -n doplane-system                       # STATUS deployed, APP VERSION 0.3.0
 kubectl get crd | grep do.pulumi.com              # seven CRDs
 kubectl -n doplane-system get pods                # manager 1/1 Running
 kubectl -n doplane-system logs deploy/doplane-controller-manager | head -20
@@ -152,6 +152,11 @@ kubectl get events --field-selector involvedObject.name=pet-secretive -o json \
 
 # Example 14: typed parameters kept their native types on the way in.
 kubectl get doresource payments-prod-pet -o jsonpath='{.spec.properties.length}{"\n"}'   # a number, not a string
+
+# Examples 10 and 14: the definitions' outputs reached the typed objects.
+kubectl get petidentities                                          # IDENTITY column is filled
+kubectl get petidentity payments-identity -o jsonpath='{.status.outputs}{"\n"}'
+kubectl get serviceidentity payments-prod -o jsonpath='{.status.outputs.tokenLength}{"\n"}'   # 12, a number
 ```
 
 ### Teardown
@@ -239,7 +244,16 @@ A resource whose delete keeps failing shows `DeleteFailed` in its events with th
 
 ### DigitalOcean
 
-Example 07 creates a small Droplet, which is billable while it exists. Add the token after the AWS sync so both sets of keys are present. The sync script copies only `AWS_*` variables, but the same ESC environment also exports `DIGITALOCEAN_ACCESS_TOKEN`, a name the provider accepts alongside `DIGITALOCEAN_TOKEN`, so it can be taken from there without printing it:
+Example 07 defines a web node and creates two instances of it, a raw `DoComposite` and a typed `WebNode` in the platform group `web.ediri.io`. Each instance is a small Droplet, billable while it exists. The platform group has to be on the operator's allowlist first:
+
+```sh
+helm upgrade doplane oci://ghcr.io/dirien/charts/doplane --version 0.3.0 \
+  --namespace doplane-system --reuse-values \
+  --set 'compositeApiGroups={web.ediri.io}'
+kubectl -n doplane-system rollout status deployment/doplane-controller-manager --timeout=3m
+```
+
+Add the token after the AWS sync so both sets of keys are present. The sync script copies only `AWS_*` variables, but the same ESC environment also exports `DIGITALOCEAN_ACCESS_TOKEN`, a name the provider accepts alongside `DIGITALOCEAN_TOKEN`, so it can be taken from there without printing it:
 
 ```sh
 pulumi env run ediri/pulumi-idp/auth -- sh -c \
@@ -253,8 +267,12 @@ With a token from anywhere else, patch it in directly. Then run the example:
 kubectl -n doplane-system patch secret provider-credentials --type merge \
   -p "{\"stringData\":{\"DIGITALOCEAN_TOKEN\":\"$DIGITALOCEAN_TOKEN\"}}"
 
+kubectl apply -f examples/07-digitalocean-web-node.yaml       # the WebNode document fails until the API is served
+kubectl wait docompositedefinition/digitalocean-web-node --for=condition=APIServed --timeout=2m
 kubectl apply -f examples/07-digitalocean-web-node.yaml
 kubectl get docomposite do-web-dev -w    # 7/7 READY
+kubectl get webnodes                     # web-typed READY True, URL column filled
+curl -sI "$(kubectl get webnode web-typed -o jsonpath='{.status.outputs.url}')" | head -1   # HTTP/1.1 200 OK once cloud-init finished nginx
 kubectl delete -f examples/07-digitalocean-web-node.yaml --wait=true --timeout=10m
 ```
 
