@@ -76,7 +76,8 @@ spec:
       properties:
         name: ${self.name}-${params.env}-${resources.suffix.outputs.result}
         region: ${params.region}
-        ipRange: 10.42.0.0/24
+        # No ipRange: DigitalOcean picks a free range per VPC, so several
+        # instances can share a region (a fixed range would collide).
         description: Managed by doplane
     - name: project
       type: digitalocean:index/project:Project
