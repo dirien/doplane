@@ -239,7 +239,15 @@ A resource whose delete keeps failing shows `DeleteFailed` in its events with th
 
 ### DigitalOcean
 
-Example 07 creates a small Droplet, which is billable while it exists. Add the token after the AWS sync so both sets of keys are present:
+Example 07 creates a small Droplet, which is billable while it exists. Add the token after the AWS sync so both sets of keys are present. The sync script copies only `AWS_*` variables, but the same ESC environment also exports `DIGITALOCEAN_ACCESS_TOKEN`, a name the provider accepts alongside `DIGITALOCEAN_TOKEN`, so it can be taken from there without printing it:
+
+```sh
+pulumi env run ediri/pulumi-idp/auth -- sh -c \
+  'kubectl -n doplane-system patch secret provider-credentials --type merge \
+     -p "{\"stringData\":{\"DIGITALOCEAN_ACCESS_TOKEN\":\"$DIGITALOCEAN_ACCESS_TOKEN\"}}"'
+```
+
+With a token from anywhere else, patch it in directly. Then run the example:
 
 ```sh
 kubectl -n doplane-system patch secret provider-credentials --type merge \
@@ -256,6 +264,8 @@ If you have not run the AWS sync, create the Secret with the token alone instead
 kubectl -n doplane-system create secret generic provider-credentials \
   --from-literal=DIGITALOCEAN_TOKEN="$DIGITALOCEAN_TOKEN"
 ```
+
+The slugs the example uses (`nyc3`, `s-1vcpu-1gb`, `ubuntu-24-04-x64`) were checked against the DigitalOcean API on 2026-09-13. If a later run fails on one of them, `doctl compute region list`, `doctl compute size list` and `doctl compute image get ubuntu-24-04-x64` show the current state.
 
 ### Pulumi Cloud private registry components
 
