@@ -143,6 +143,64 @@ var _ = Describe("DoComposite Controller", func() {
 		Expect(child.UID).NotTo(Equal(oldUID), "child must be a new object, not an in-place update")
 	})
 
+	It("publishes outputs once their sources are available", func() {
+		def := simpleDefinition("out-def", "pet")
+		def.Spec.Outputs = &apiextensionsv1.JSON{Raw: []byte(`{"petName": "${resources.pet.id}", "url": "http://${resources.pet.outputs.host}/${self.name}"}`)}
+		Expect(k8sClient.Create(ctx, def)).To(Succeed())
+		comp := &dov1alpha1.DoComposite{
+			ObjectMeta: metav1.ObjectMeta{Name: "out-comp", Namespace: ns},
+			Spec:       dov1alpha1.DoCompositeSpec{Definition: "out-def"},
+		}
+		Expect(k8sClient.Create(ctx, comp)).To(Succeed())
+		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, comp)
+			child := &dov1alpha1.DoResource{ObjectMeta: metav1.ObjectMeta{Name: "out-comp-pet", Namespace: ns}}
+			_ = k8sClient.Delete(ctx, child)
+			_ = k8sClient.Delete(ctx, def)
+		})
+
+		By("before the child reports anything, no output is published")
+		Expect(reconcileComp("out-comp")).To(Succeed())
+		Expect(k8sClient.Get(ctx, nn("out-comp"), comp)).To(Succeed())
+		Expect(comp.Status.Outputs).To(BeNil())
+
+		By("with only the id known, the id-based output appears and the other is named as pending")
+		child := &dov1alpha1.DoResource{}
+		Expect(k8sClient.Get(ctx, nn("out-comp-pet"), child)).To(Succeed())
+		child.Status.ID = "fluffy"
+		meta.SetStatusCondition(&child.Status.Conditions, metav1.Condition{
+			Type: dov1alpha1.ConditionReady, Status: metav1.ConditionTrue, Reason: "Available",
+		})
+		Expect(k8sClient.Status().Update(ctx, child)).To(Succeed())
+		Expect(reconcileComp("out-comp")).To(Succeed())
+		Expect(k8sClient.Get(ctx, nn("out-comp"), comp)).To(Succeed())
+		Expect(comp.Status.Outputs).NotTo(BeNil())
+		Expect(string(comp.Status.Outputs.Raw)).To(Equal(`{"petName":"fluffy"}`))
+		ready := meta.FindStatusCondition(comp.Status.Conditions, dov1alpha1.ConditionReady)
+		Expect(ready.Status).To(Equal(metav1.ConditionTrue), "readiness follows the children, not the outputs")
+		Expect(ready.Message).To(ContainSubstring("outputs pending: url (pet: status.outputs.host not yet available)"))
+
+		By("once the child's outputs carry the source, the templated output resolves")
+		Expect(k8sClient.Get(ctx, nn("out-comp-pet"), child)).To(Succeed())
+		child.Status.Outputs = &apiextensionsv1.JSON{Raw: []byte(`{"host":"203.0.113.9"}`)}
+		Expect(k8sClient.Status().Update(ctx, child)).To(Succeed())
+		Expect(reconcileComp("out-comp")).To(Succeed())
+		Expect(k8sClient.Get(ctx, nn("out-comp"), comp)).To(Succeed())
+		Expect(string(comp.Status.Outputs.Raw)).To(Equal(`{"petName":"fluffy","url":"http://203.0.113.9/out-comp"}`))
+		ready = meta.FindStatusCondition(comp.Status.Conditions, dov1alpha1.ConditionReady)
+		Expect(ready.Message).To(Equal("all child resources are ready"))
+
+		By("an output naming an undeclared resource fails the render")
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "out-def"}, def)).To(Succeed())
+		def.Spec.Outputs = &apiextensionsv1.JSON{Raw: []byte(`{"x": "${resources.ghost.id}"}`)}
+		Expect(k8sClient.Update(ctx, def)).To(Succeed())
+		Expect(reconcileComp("out-comp")).To(Succeed())
+		Expect(k8sClient.Get(ctx, nn("out-comp"), comp)).To(Succeed())
+		synced := meta.FindStatusCondition(comp.Status.Conditions, dov1alpha1.ConditionSynced)
+		Expect(synced.Reason).To(Equal("RenderFailed"))
+		Expect(synced.Message).To(ContainSubstring("ghost"))
+	})
+
 	It("never prunes labeled resources it does not own", func() {
 		Expect(k8sClient.Create(ctx, simpleDefinition("pr-def", "pet"))).To(Succeed())
 		comp := &dov1alpha1.DoComposite{

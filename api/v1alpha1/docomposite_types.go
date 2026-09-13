@@ -40,6 +40,22 @@ type DoCompositeDefinitionSpec struct {
 	// +kubebuilder:validation:MinItems=1
 	Resources []CompositeResourceTemplate `json:"resources"`
 
+	// Outputs declares what a composite publishes in status.outputs (and,
+	// through a typed platform API, in the typed object's status.outputs):
+	// a JSON object whose string values may contain the same expressions as
+	// templates — ${params.*}, ${self.*} and ${resources.<name>.id} /
+	// ${resources.<name>.outputs.<path>}. Unlike template properties, one
+	// string may combine several sibling outputs ("http://${resources.lb.
+	// outputs.ip}:${resources.svc.outputs.port}"). A value that is exactly
+	// one expression keeps the source's native type; nested objects and
+	// arrays are supported. An output whose sources are not yet available
+	// is omitted until they are and named in the Ready condition message.
+	// Outputs land in etcd like status.outputs of a DoResource: treat them
+	// as sensitive-adjacent.
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Outputs *apiextensionsv1.JSON `json:"outputs,omitempty"`
+
 	// API exposes this definition as its own typed, namespaced CRD (e.g.
 	// `kind: Website` in `platform.acme.com`): users apply the platform
 	// kind with their parameters as spec, instead of a generic DoComposite.
@@ -98,6 +114,15 @@ type CompositeAPI struct {
 	// +kubebuilder:validation:Schemaless
 	// +kubebuilder:pruning:PreserveUnknownFields
 	ParametersSchema *apiextensionsv1.JSONSchemaProps `json:"parametersSchema,omitempty"`
+
+	// AdditionalPrinterColumns extends the generated kind's `kubectl get`
+	// columns after the built-in READY/SYNCED/REASON/AGE, typically to show
+	// an output (jsonPath: .status.outputs.url). Same shape as a CRD's
+	// additionalPrinterColumns.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	AdditionalPrinterColumns []apiextensionsv1.CustomResourceColumnDefinition `json:"additionalPrinterColumns,omitempty"`
 }
 
 // CompositeResourceTemplate templates one DoResource of a composite.
@@ -262,6 +287,14 @@ type DoCompositeStatus struct {
 	// rendered as "ready/total".
 	// +optional
 	ReadyResources string `json:"readyResources,omitempty"`
+
+	// Outputs holds the definition's spec.outputs rendered against the
+	// parameters and the children's observed state. Keys whose sources are
+	// not yet available are absent. Sensitive-adjacent, like a DoResource's
+	// status.outputs.
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Outputs *apiextensionsv1.JSON `json:"outputs,omitempty"`
 
 	// Revision names the DoCompositeDefinitionRevision last rendered.
 	// +optional

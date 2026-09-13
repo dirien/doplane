@@ -82,6 +82,26 @@ func TestCheckTemplateParams(t *testing.T) {
 	if err := checkTemplateParams(spec(open, map[string]any{"bucket": "${params.extra}"}, "")); err != nil {
 		t.Errorf("schemas preserving unknown fields accept any parameter: %v", err)
 	}
+
+	withOutputs := func(params *apiextensionsv1.JSONSchemaProps, outputs map[string]any) *dov1alpha1.DoCompositeDefinitionSpec {
+		s := spec(params, map[string]any{"bucket": "${params.env}"}, "")
+		s.Outputs = jsonRaw(t, outputs)
+		return s
+	}
+	if err := checkTemplateParams(withOutputs(envOnly, map[string]any{"name": "${resources.bucket.id}-${params.env}"})); err != nil {
+		t.Errorf("outputs over declared resources and parameters must pass: %v", err)
+	}
+	if err := checkTemplateParams(withOutputs(envOnly, map[string]any{"name": "${params.gone}"})); err == nil ||
+		!strings.Contains(err.Error(), "outputs reference ${params.gone}") {
+		t.Errorf("outputs referencing an undeclared parameter must fail naming it, got %v", err)
+	}
+	if err := checkTemplateParams(withOutputs(nil, map[string]any{"name": "${resources.ghost.id}"})); err == nil ||
+		!strings.Contains(err.Error(), "ghost") {
+		t.Errorf("outputs naming an undeclared resource must fail even without a schema, got %v", err)
+	}
+	if err := checkTemplateParams(withOutputs(envOnly, map[string]any{"name": "$${resources.ghost.id}"})); err != nil {
+		t.Errorf("escaped output expressions are literals: %v", err)
+	}
 }
 
 func TestTypedCompositeCRDShape(t *testing.T) {
@@ -133,6 +153,31 @@ func TestTypedCompositeCRDShape(t *testing.T) {
 	overlap.DeprecatedVersions = []string{"v1"}
 	if _, err := typedCompositeCRD("site-def", overlap); err == nil {
 		t.Error("the current version cannot also be deprecated")
+	}
+
+	columns := api.DeepCopy()
+	columns.AdditionalPrinterColumns = []apiextensionsv1.CustomResourceColumnDefinition{
+		{Name: "URL", Type: "string", JSONPath: ".status.outputs.url"},
+	}
+	crd, err = typedCompositeCRD("site-def", columns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range crd.Spec.Versions {
+		names := make([]string, 0, len(v.AdditionalPrinterColumns))
+		for _, c := range v.AdditionalPrinterColumns {
+			names = append(names, c.Name)
+		}
+		if strings.Join(names, ",") != "READY,SYNCED,REASON,URL,AGE" {
+			t.Errorf("version %s: author columns sit before AGE, got %v", v.Name, names)
+		}
+	}
+	clash := api.DeepCopy()
+	clash.AdditionalPrinterColumns = []apiextensionsv1.CustomResourceColumnDefinition{
+		{Name: "ready", Type: "string", JSONPath: ".status.outputs.url"},
+	}
+	if _, err := typedCompositeCRD("site-def", clash); err == nil {
+		t.Error("a column shadowing a built-in must be rejected")
 	}
 }
 

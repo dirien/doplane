@@ -499,6 +499,7 @@ func (r *TypedCompositeReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		"readyResources": mirror.Status.ReadyResources,
 		"resources":      mirror.Status.Resources,
 		"revision":       mirror.Status.Revision,
+		"outputs":        mirror.Status.Outputs,
 		"conditions":     mirror.Status.Conditions,
 	})
 }

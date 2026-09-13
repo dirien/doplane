@@ -275,10 +275,19 @@ func writtenVersion(obj *unstructured.Unstructured, group, fallback string) stri
 // the check must never reject a valid definition.
 var paramsRootRe = regexp.MustCompile(`\$\{\s*params\.([A-Za-z0-9_-]+)`)
 
-// checkTemplateParams cross-checks the templates' ${params.*} usage against
-// the parameters schema: a parameter the schema would prune can never be
-// supplied, so referencing it is a definition bug caught at apply time.
+// resourcesRootRe extracts the resource name of ${resources.<name>...}
+// expressions.
+var resourcesRootRe = regexp.MustCompile(`\$\{\s*resources\.([A-Za-z0-9_-]+)`)
+
+// checkTemplateParams cross-checks the templates' and outputs' ${params.*}
+// usage against the parameters schema: a parameter the schema would prune
+// can never be supplied, so referencing it is a definition bug caught at
+// apply time. Outputs are additionally checked to name only resources the
+// definition declares.
 func checkTemplateParams(spec *dov1alpha1.DoCompositeDefinitionSpec) error {
+	if err := checkOutputSources(spec); err != nil {
+		return err
+	}
 	params := spec.API.ParametersSchema
 	if params == nil || len(params.Properties) == 0 ||
 		(params.XPreserveUnknownFields != nil && *params.XPreserveUnknownFields) ||
@@ -297,6 +306,34 @@ func checkTemplateParams(spec *dov1alpha1.DoCompositeDefinitionSpec) error {
 				return fmt.Errorf("resource %q references ${params.%s}, but the parameters schema declares no property %q (it would be pruned at admission)",
 					tpl.Name, m[1], m[1])
 			}
+		}
+	}
+	if spec.Outputs != nil {
+		text := strings.ReplaceAll(string(spec.Outputs.Raw), "$${", "")
+		for _, m := range paramsRootRe.FindAllStringSubmatch(text, -1) {
+			if _, ok := params.Properties[m[1]]; !ok {
+				return fmt.Errorf("outputs reference ${params.%s}, but the parameters schema declares no property %q (it would be pruned at admission)",
+					m[1], m[1])
+			}
+		}
+	}
+	return nil
+}
+
+// checkOutputSources rejects outputs naming a resource the definition does
+// not declare — such an output could never resolve.
+func checkOutputSources(spec *dov1alpha1.DoCompositeDefinitionSpec) error {
+	if spec.Outputs == nil {
+		return nil
+	}
+	declared := map[string]struct{}{}
+	for i := range spec.Resources {
+		declared[spec.Resources[i].Name] = struct{}{}
+	}
+	text := strings.ReplaceAll(string(spec.Outputs.Raw), "$${", "")
+	for _, m := range resourcesRootRe.FindAllStringSubmatch(text, -1) {
+		if _, ok := declared[m[1]]; !ok {
+			return fmt.Errorf("outputs reference ${resources.%s}, but the definition declares no resource named %q", m[1], m[1])
 		}
 	}
 	return nil

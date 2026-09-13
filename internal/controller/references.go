@@ -148,13 +148,19 @@ func (r *DoResourceReconciler) checkOutputPath(ctx context.Context, src *dov1alp
 	return nil
 }
 
+// Field paths a reference (or a composite output) can read from a source.
+const (
+	fieldPathID      = "status.id"
+	fieldPathOutputs = "status.outputs"
+)
+
 // resolveFieldPath reads "status.id" or a "status.outputs.*" path from a
 // source DoResource. The boolean reports whether the value is populated.
 func resolveFieldPath(src *dov1alpha1.DoResource, fieldPath string) (any, bool, error) {
 	switch {
-	case fieldPath == "status.id":
+	case fieldPath == fieldPathID:
 		return src.Status.ID, src.Status.ID != "", nil
-	case fieldPath == "status.outputs" || strings.HasPrefix(fieldPath, "status.outputs."):
+	case fieldPath == fieldPathOutputs || strings.HasPrefix(fieldPath, fieldPathOutputs+"."):
 		if src.Status.Outputs == nil || len(src.Status.Outputs.Raw) == 0 {
 			return nil, false, nil
 		}
@@ -164,10 +170,10 @@ func resolveFieldPath(src *dov1alpha1.DoResource, fieldPath string) (any, bool, 
 		if err := dec.Decode(&outputs); err != nil {
 			return nil, false, fmt.Errorf("source %q has unparseable outputs: %w", src.Name, err)
 		}
-		if fieldPath == "status.outputs" {
+		if fieldPath == fieldPathOutputs {
 			return outputs, true, nil
 		}
-		v, ok := pulumido.GetPath(outputs, strings.TrimPrefix(fieldPath, "status.outputs."))
+		v, ok := pulumido.GetPath(outputs, strings.TrimPrefix(fieldPath, fieldPathOutputs+"."))
 		return v, ok, nil
 	default:
 		return nil, false, fmt.Errorf("fieldPath %q must be \"status.id\" or start with \"status.outputs.\"", fieldPath)
