@@ -34,6 +34,16 @@ spec:
         team:
           type: string
           minLength: 1
+    # Shown by `kubectl get petidentities` next to READY/SYNCED/REASON.
+    additionalPrinterColumns:
+      - name: IDENTITY
+        type: string
+        jsonPath: .status.outputs.identity
+  # Published on status.outputs of every instance (and of the typed object)
+  # once the sources exist; one output may combine several siblings.
+  outputs:
+    petName: ${resources.pet.id}
+    identity: ${resources.pet.id}-${resources.suffix.outputs.result}
   resources:
     - name: pet
       type: random:index/randomPet:RandomPet
